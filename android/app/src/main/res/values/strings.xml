@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tagwerk</string>
+    <string name="title_activity_main">Tagwerk</string>
+    <string name="package_name">de.plangedev.tagwerk</string>
+    <string name="custom_url_scheme">de.plangedev.tagwerk</string>
+</resources>

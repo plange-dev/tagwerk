@@ -1,0 +1,56 @@
+name: Android-App bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Web-App in das Android-Projekt kopieren
+        run: npx cap sync android
+
+      - name: APK bauen
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: APK bereitstellen
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Tagwerk.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tagwerk-APK
+          path: Tagwerk.apk
+
+      - name: Als Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Tagwerk 1.0.${{ github.run_number }}
+          body: |
+            **Installieren:** `Tagwerk.apk` auf dem Android-Handy herunterladen und öffnen.
+            Beim ersten Mal fragt Android, ob du Apps aus dieser Quelle erlauben willst – einmal bestätigen.
+          files: Tagwerk.apk
+          make_latest: true

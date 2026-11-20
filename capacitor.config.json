@@ -1,0 +1,6 @@
+{
+  "appId": "de.plangedev.tagwerk",
+  "appName": "Tagwerk",
+  "webDir": "www",
+  "android": { "backgroundColor": "#F5EFE6" }
+}
