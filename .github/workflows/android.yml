@@ -2,7 +2,7 @@ name: Android-App bauen
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, nightly]
   workflow_dispatch:
 
 permissions:

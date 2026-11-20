@@ -28,7 +28,7 @@ cd android && ./gradlew assembleDebug
 Jeder Push auf `main` baut automatisch eine neue APK (GitHub Actions).
 
 ## Branches
-- **`develop`** – Standard-Branch für neue Funktionen. Jeder Push baut eine Test-APK
+- **`nightly`** – Standard-Branch für neue Funktionen. Jeder Push baut eine Test-APK
   (unter *Actions* → letzter Lauf → *Artifacts*), aber kein Release.
 - **`main`** – stabile Version. Was hier landet, wird automatisch als Release mit
-  `Tagwerk.apk` veröffentlicht. Neue Funktionen kommen per Pull Request von `develop` nach `main`.
+  `Tagwerk.apk` veröffentlicht. Neue Funktionen kommen per Pull Request von `nightly` nach `main`.
