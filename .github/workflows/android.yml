@@ -2,7 +2,7 @@ name: Android-App bauen
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 permissions:
@@ -41,10 +41,11 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Tagwerk-APK
+          name: Tagwerk-APK-${{ github.ref_name }}
           path: Tagwerk.apk
 
-      - name: Als Release veröffentlichen
+      - name: Als Release veröffentlichen (nur main)
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
