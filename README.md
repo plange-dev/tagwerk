@@ -8,7 +8,10 @@ Eigenständige Kalender-App mit eigenem Design.
 - Adressen (Straße + Hausnummer, PLZ + Ort) werden erkannt
 - **Navigation:** Tippen auf das Pfeil-Symbol öffnet die Route in Google Maps (auf Android zusätzlich „Andere Navi-App“, z. B. Waze oder OsmAnd)
 - Wiederkehrende Termine, eigene Kalender mit Farben, Suche, dunkles Design
-- Funktioniert offline, Daten bleiben auf dem Gerät; Backup über *Optionen*
+- **Handy-Konten (Android):** zeigt und bearbeitet die Termine aller Kalender-Konten auf dem Handy
+  (Google, Samsung, Outlook/Exchange, CalDAV über DAVx⁵ …) – Synchronisation in beide Richtungen
+  übernimmt Android. Vorhandene Tagwerk-Termine lassen sich in ein Konto übertragen.
+- Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
 ## Installieren
 
