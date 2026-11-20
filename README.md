@@ -11,6 +11,8 @@ Eigenständige Kalender-App mit eigenem Design.
 - **Handy-Konten (Android):** zeigt und bearbeitet die Termine aller Kalender-Konten auf dem Handy
   (Google, Samsung, Outlook/Exchange, CalDAV über DAVx⁵ …) – Synchronisation in beide Richtungen
   übernimmt Android. Vorhandene Tagwerk-Termine lassen sich in ein Konto übertragen.
+- **Google-Konto (PC/Web):** Anmeldung mit Google, Google-Kalender anzeigen und Termine dort
+  eintragen, bearbeiten, löschen. Benötigt eine OAuth-Client-ID (siehe unten).
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
 ## Installieren
@@ -35,3 +37,12 @@ Jeder Push auf `main` baut automatisch eine neue APK (GitHub Actions).
   (unter *Actions* → letzter Lauf → *Artifacts*), aber kein Release.
 - **`main`** – stabile Version. Was hier landet, wird automatisch als Release mit
   `Tagwerk.apk` veröffentlicht. Neue Funktionen kommen per Pull Request von `nightly` nach `main`.
+
+## Google-Anmeldung einrichten (PC/Web)
+1. https://console.cloud.google.com → neues Projekt „Tagwerk“
+2. *APIs & Dienste → Bibliothek* → **Google Calendar API** aktivieren
+3. *Google Auth Platform* → Branding (App-Name, Support-E-Mail), Zielgruppe **Extern**,
+   eigene Gmail-Adresse als **Testnutzer** eintragen
+4. *Clients → Client erstellen* → Typ **Webanwendung**,
+   autorisierte JavaScript-Quelle: `https://plange-dev.github.io`
+5. Client-ID in `www/index.html` bei `GOOGLE_CLIENT_ID` eintragen

@@ -339,6 +339,12 @@ const fmtDayLong=d=>`${WD_LONG[wdIndex(d)]}, ${d.getDate()}. ${MONTHS[d.getMonth
 const uid=()=>"e"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const isNative=()=>!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
 const isAndroid=()=>/android/i.test(navigator.userAgent);
+/* Google-Kalender für die Web-/PC-Version: OAuth-Client-ID aus der Google Cloud Console (Typ „Webanwendung“) */
+const GOOGLE_CLIENT_ID="";
+const FRAMED=(()=>{try{return window.self!==window.top;}catch(e){return true;}})();
+const googleAvailable=()=>!!GOOGLE_CLIENT_ID&&!FRAMED&&!isNative()&&(location.protocol==="https:"||location.hostname==="localhost");
+const provLabel=()=>isNative()?"Handy-Kalender":"Google Kalender";
+const provMark=()=>isNative()?"📱 ":"☁ ";
 const mapsUrl=loc=>"https://www.google.com/maps/dir/?api=1&destination="+encodeURIComponent(loc)+"&travelmode=driving";
 const geoUrl=loc=>"geo:0,0?q="+encodeURIComponent(loc);
 const NAV_ICON='<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.7 2.3a1 1 0 0 0-1.06-.23l-18 7a1 1 0 0 0 .08 1.9l7.6 2.1 2.1 7.6a1 1 0 0 0 1.9.08l7-18a1 1 0 0 0-.22-1.05z"/></svg>';
@@ -427,7 +433,7 @@ function savePrefs(){lsSet("tagwerk:prefs",{view:state.view,lastCal:state.lastCa
 
 /* ---------- Calendars & holidays ---------- */
 const calOf=id=>{
-  if(typeof id==="string"&&id.startsWith("dev:"))return state.dev.cals.find(c=>c.id===id)||{id,name:"Handy-Kalender",color:"#8A7B6A",device:true,writable:false};
+  if(typeof id==="string"&&id.startsWith("dev:"))return state.dev.cals.find(c=>c.id===id)||{id,name:provLabel(),color:"#8A7B6A",device:true,writable:false};
   return state.cals.find(c=>c.id===id)||state.cals[0];
 };
 const colorOf=id=>(calOf(id)||{}).color||"#888";
@@ -565,7 +571,7 @@ function agendaItem(o,day){
   if(o.holiday)return `<div class="agenda-item holi" style="--c:var(--line)"><time><b>Feiertag</b></time><div class="bar"></div><div><div class="t">${esc(o.title)}</div></div><span></span></div>`;
   const tl=timeLabel(o,day);
   const time=o.allDay?`<b>ganztägig</b>`:`<b>${tl[0]}</b>${tl[1]}`;
-  const cc=calOf(o.ev.cal);const sub=[cc?(cc.device?"📱 ":"")+cc.name:"",o.ev.location,o.ev.repeat&&o.ev.repeat!=="none"?"↻ "+(REP[o.ev.repeat]||"Serie"):""].filter(Boolean).map(esc).join(" · ");
+  const cc=calOf(o.ev.cal);const sub=[cc?(cc.device?provMark():"")+cc.name:"",o.ev.location,o.ev.repeat&&o.ev.repeat!=="none"?"↻ "+(REP[o.ev.repeat]||"Serie"):""].filter(Boolean).map(esc).join(" · ");
   return `<div class="agenda-item" style="--c:${o.color}" data-act="open" data-id="${esc(o.ev.id)}" data-date="${ymd(o.start)}"><time>${time}</time><div class="bar"></div><div><div class="t">${esc(o.title)}</div>${sub?`<div class="s">${sub}</div>`:""}</div>${o.ev.location?navBtn(o.ev.location,true):"<span></span>"}</div>`;
 }
 function dayPanel(d){
@@ -699,13 +705,13 @@ function openEditor(id,opts={}){
       <div class="row"><span>Ende</span><div class="dt"><input type="date" id="f-ed" required><input type="time" id="f-et" class="tm"></div></div>
     </div>
     <div class="group">
-      <div class="row"><span>Kalender</span><div class="calpick"><i id="f-calc"></i><select id="f-cal"><optgroup label="Tagwerk (nur dieses Gerät)">${state.cals.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>${devWritable().length?`<optgroup label="Handy-Konten (synchronisiert)">${devWritable().map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</optgroup>`:""}</select></div></div>
+      <div class="row"><span>Kalender</span><div class="calpick"><i id="f-calc"></i><select id="f-cal"><optgroup label="Tagwerk (nur dieses Gerät)">${state.cals.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>${devWritable().length?`<optgroup label="${isNative()?"Handy-Konten":"Google-Konto"} (synchronisiert)">${devWritable().map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</optgroup>`:""}</select></div></div>
       <div class="row"><span>Wiederholen</span><select id="f-rep">${Object.entries(REP).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select></div>
       <div class="row" id="r-until"><span>Endet am</span><input type="date" id="f-until"></div>
     </div>
     <div class="group"><input id="f-loc" placeholder="Ort oder Adresse – z. B. Hauptstraße 5, 10115 Berlin" maxlength="200" autocomplete="street-address"><div class="navrow" id="f-nav"></div><textarea id="f-notes" placeholder="Notizen" rows="3" maxlength="5000"></textarea></div>
-    ${lockSeries?`<p class="hint">Serie aus deinem Handy-Kalender: Titel, Ort und Notizen gelten für die ganze Serie. Datum und Wiederholung änderst du in der Kalender-App deines Kontos.</p>`:old&&rep!=="none"?`<p class="hint">Änderungen gelten für die ganze Serie.</p>`:""}
-    ${old&&old.device?`<p class="hint">📱 Wird mit „${esc(calOf(old.cal).name)}“ synchronisiert.</p>`:""}
+    ${lockSeries?`<p class="hint">Serie aus ${isNative()?"deinem Handy-Kalender":"Google Kalender"}: Titel, Ort und Notizen gelten für die ganze Serie. Datum und Wiederholung änderst du ${isNative()?"in der Kalender-App deines Kontos":"direkt in Google Kalender"}.</p>`:old&&rep!=="none"?`<p class="hint">Änderungen gelten für die ganze Serie.</p>`:""}
+    ${old&&old.device?`<p class="hint">${provMark()}Wird mit „${esc(calOf(old.cal).name)}“ synchronisiert.</p>`:""}
     ${old?`<button type="button" class="danger" id="f-del">Termin löschen</button>`:""}
   </form>`);
   const f=id=>$("#"+id,modal);
@@ -816,7 +822,7 @@ let _devP=null;
 function devPlugin(){
   if(_devP)return _devP;
   const C=window.Capacitor;
-  if(!C||!isNative())return null;
+  if(!C||!isNative()){if(googleAvailable())_devP=GoogleCal;return _devP;}
   try{_devP=C.registerPlugin?C.registerPlugin("CapacitorCalendar"):null;}catch(e){_devP=null;}
   if(!_devP&&C.Plugins)_devP=C.Plugins.CapacitorCalendar||null;
   return _devP;
@@ -831,21 +837,21 @@ function devSavePrefs(){lsSet(DEV_KEY,{enabled:state.dev.enabled,show:state.dev.
 const errText=e=>(e&&(e.message||e.errorMessage))||"Unbekannter Fehler";
 async function devConnect(){
   const P=devPlugin();
-  if(!P){toast("Das geht nur in der Android-App.");return;}
+  if(!P){toast(isNative()?"Kalender-Zugriff ist nicht verfügbar.":"Die Google-Verbindung ist noch nicht eingerichtet.");return;}
   try{
     const r=await P.requestFullCalendarAccess();
     if(r&&r.result==="granted"){
-      state.dev.enabled=true;devSavePrefs();
+      state.dev.enabled=true;state.dev.needAuth=false;devSavePrefs();
       await devLoadCals();devReload();
-      toast("Handy-Kalender verbunden");
-    }else toast("Ohne Kalender-Zugriff geht es nicht. Erlauben unter Einstellungen → Apps → Tagwerk → Berechtigungen.");
+      toast(provLabel()+" verbunden");
+    }else toast(isNative()?"Ohne Kalender-Zugriff geht es nicht. Erlauben unter Einstellungen → Apps → Tagwerk → Berechtigungen.":"Google hat den Zugriff nicht erlaubt.");
   }catch(e){toast("Verbinden fehlgeschlagen: "+errText(e));}
 }
 function devDisconnect(){
-  openModal(`<div class="sheet"><div class="sheet-head"><span></span><h3>Handy-Kalender trennen?</h3><span></span></div>
+  openModal(`<div class="sheet"><div class="sheet-head"><span></span><h3>${provLabel()} trennen?</h3><span></span></div>
     <p class="hint">Die Termine deiner Konten werden in Tagwerk nicht mehr angezeigt. In deinen Konten (z. B. Google) bleibt alles erhalten.</p>
     <div class="choice"><button class="red" id="dd-yes">Trennen</button><button data-close>Abbrechen</button></div></div>`);
-  $("#dd-yes",modal).onclick=()=>{closeModal();state.dev.enabled=false;state.dev.events=[];state.dev.byKey=new Map();state.dev.from=null;if(String(state.lastCal).startsWith("dev:")){state.lastCal=null;savePrefs();}devSavePrefs();render();};
+  $("#dd-yes",modal).onclick=()=>{closeModal();if(!isNative())GoogleCal.signOut();state.dev.enabled=false;state.dev.events=[];state.dev.byKey=new Map();state.dev.from=null;if(String(state.lastCal).startsWith("dev:")){state.lastCal=null;savePrefs();}devSavePrefs();render();};
 }
 async function devLoadCals(){
   const P=devPlugin();if(!P)return;
@@ -855,7 +861,7 @@ async function devLoadCals(){
       .sort((a,b)=>a.account.localeCompare(b.account)||a.name.localeCompare(b.name));
     for(const c of state.dev.cals)if(!(c.id in state.dev.show))state.dev.show[c.id]=c.sysVisible;
     devSavePrefs();state.dev.error=null;
-  }catch(e){state.dev.error="Kalender konnten nicht gelesen werden: "+errText(e);}
+  }catch(e){if(e&&e.needAuth)state.dev.needAuth=true;state.dev.error=e&&e.needAuth?null:"Kalender konnten nicht gelesen werden: "+errText(e);}
 }
 function devReload(){state.dev.from=null;state.dev.to=null;render();}
 function devEnsureView(){
@@ -884,7 +890,7 @@ async function devEnsure(from,to){
       by.set(key,inst);
     }
     d.events=list;d.byKey=by;d.error=null;
-  }catch(e){d.error="Termine konnten nicht geladen werden: "+errText(e);}
+  }catch(e){if(e&&e.needAuth){d.needAuth=true;d.error=null;}else d.error="Termine konnten nicht geladen werden: "+errText(e);}
   d.from=a;d.to=b;d.loading=false;
   render();
 }
@@ -904,7 +910,7 @@ function devOpts(ev){
 }
 async function deviceSave(old,out){
   const P=devPlugin();
-  if(!P){toast("Handy-Kalender ist nur in der Android-App verfügbar.");return;}
+  if(!P){toast(provLabel()+" ist hier nicht verfügbar.");return;}
   const tgt=String(out.cal).startsWith("dev:")?out.cal.slice(4):null;
   const o=devOpts(out);
   try{
@@ -919,13 +925,13 @@ async function deviceSave(old,out){
         else saveEvent(Object.assign({},out,{id:uid(),created:Date.now(),updated:Date.now()}));
         await P.deleteEvent({id:String(inst.id),span:0});
       }
-      toast("Im Handy-Kalender gesichert");
+      toast(`Gesichert in „${calOf(tgt?out.cal:old.cal).name}“`);
     }else{
       await P.createEvent(Object.assign({calendarId:tgt},o));
       if(old)deleteEvent(old.id);
       toast(`Eingetragen in „${calOf(out.cal).name}“`);
     }
-  }catch(e){toast("Handy-Kalender: "+errText(e));}
+  }catch(e){if(e&&e.needAuth){state.dev.needAuth=true;toast("Google-Anmeldung abgelaufen – bitte links erneut anmelden und nochmal speichern.");}else toast(provLabel()+": "+errText(e));}
   devReload();
 }
 function askDeleteDevice(old){
@@ -948,7 +954,7 @@ function askDeleteDevice(old){
 }
 function devMigrate(){
   const targets=devWritable();
-  if(!targets.length){toast("Kein beschreibbarer Handy-Kalender gefunden.");return;}
+  if(!targets.length){toast("Kein beschreibbarer Kalender gefunden.");return;}
   const n=state.events.size;
   openModal(`<div class="sheet"><div class="sheet-head"><button class="link" data-close>Abbrechen</button><h3>Termine übertragen</h3><span style="width:60px"></span></div>
     <p class="hint">Deine ${n} Tagwerk-Termine werden in das gewählte Konto kopiert und danach aus Tagwerk entfernt. So sind sie überall synchronisiert. Ausgelassene Einzeltermine einer Serie werden dabei nicht übernommen.</p>
@@ -968,21 +974,113 @@ function devMigrate(){
 function renderDev(){
   const el=$("#devsec");if(!el)return;
   const d=state.dev;
-  if(!isNative()){el.innerHTML=`<div class="side-title">Handy-Konten</div><p class="side-note">Google, Samsung, Outlook &amp; Co. verbindest du in der Android-App von Tagwerk.</p>`;return;}
-  if(!d.enabled){el.innerHTML=`<div class="side-title">Handy-Konten</div><p class="side-note">Zeigt die Termine aller Konten auf deinem Handy (Google, Samsung, Outlook …) und trägt neue Termine dort ein – synchron in beide Richtungen.</p><button class="pill wide" data-act="devconnect">Mit Handy-Konten verbinden</button>`;return;}
-  let h=`<div class="side-title">Handy-Konten <button data-act="devrefresh" aria-label="Aktualisieren">↻ Aktualisieren</button></div>`;
+  const nat=isNative(),title=nat?"Handy-Konten":"Google-Konto";
+  if(!nat&&!googleAvailable()){el.innerHTML=`<div class="side-title">Google-Konto</div><p class="side-note">${FRAMED?"Die Google-Verbindung gibt es in der installierten PC-App und in der Android-App.":"Die Google-Verbindung ist noch nicht eingerichtet."}</p>`;return;}
+  if(!nat)GoogleCal.preload();
+  if(!d.enabled){el.innerHTML=nat?`<div class="side-title">${title}</div><p class="side-note">Zeigt die Termine aller Konten auf deinem Handy (Google, Samsung, Outlook …) und trägt neue Termine dort ein – synchron in beide Richtungen.</p><button class="pill wide" data-act="devconnect">Mit Handy-Konten verbinden</button>`
+    :`<div class="side-title">${title}</div><p class="side-note">Melde dich mit Google an, um deine Google-Kalender hier zu sehen und Termine direkt dort einzutragen.</p><button class="pill wide" data-act="devconnect">Mit Google verbinden</button>`;return;}
+  let h=`<div class="side-title">${title} <button data-act="devrefresh" aria-label="Aktualisieren">↻ Aktualisieren</button></div>`;
+  if(d.needAuth)h+=`<p class="side-note">Die Google-Anmeldung ist abgelaufen.</p><button class="pill wide" data-act="devconnect" style="margin-bottom:8px">Erneut anmelden</button>`;
   let acc=null;
   for(const c of d.cals){
-    if(c.account!==acc){acc=c.account;h+=`<div class="acct">${esc(acc||"Auf dem Gerät")}</div>`;}
+    if(c.account!==acc){acc=c.account;h+=`<div class="acct">${esc(acc||(nat?"Auf dem Gerät":"Google"))}</div>`;}
     h+=`<div class="cal-item ${d.show[c.id]!==false?"on":""}" data-act="toggledev" data-id="${esc(c.id)}" style="--c:${esc(c.color)}"><div class="cal-box"></div><span>${esc(c.name)}${c.writable?"":" 🔒"}</span></div>`;
   }
-  if(!d.cals.length&&!d.error)h+=`<p class="side-note">${d.loading?"Lädt…":"Keine Kalender gefunden. Füge in den Android-Einstellungen unter „Konten“ z. B. dein Google-Konto hinzu."}</p>`;
+  if(!d.cals.length&&!d.error&&!d.needAuth)h+=`<p class="side-note">${d.loading?"Lädt…":nat?"Keine Kalender gefunden. Füge in den Android-Einstellungen unter „Konten“ z. B. dein Google-Konto hinzu.":"Keine Kalender gefunden."}</p>`;
   if(d.error)h+=`<div class="dev-err">${esc(d.error)}</div>`;
   if(state.events.size&&devWritable().length)h+=`<button class="opt-btn" data-act="devmigrate">⇄ Tagwerk-Termine ins Konto übertragen</button>`;
   h+=`<button class="opt-btn" data-act="devdisconnect" style="color:var(--muted)">Verbindung trennen</button>`;
   el.innerHTML=h;
 }
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&state.dev.enabled&&devPlugin())devLoadCals().then(devReload);});
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&state.dev.enabled&&devPlugin()&&!state.dev.needAuth)devLoadCals().then(devReload);});
+
+/* ---------- Google Kalender (Web/PC) – gleiche Schnittstelle wie das Android-Plugin ---------- */
+const GoogleCal=(()=>{
+  const API="https://www.googleapis.com/calendar/v3";
+  const SCOPES="https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+  const saved=lsGet("tagwerk:gtoken")||{};
+  let token=saved.token||null,exp=saved.exp||0,email=lsGet("tagwerk:gmail")||"",client=null,loading=null;
+  const evCal=new Map();
+  const needAuth=()=>Object.assign(new Error("Bitte erneut mit Google anmelden."),{needAuth:true});
+  function preload(){
+    if(window.google&&google.accounts&&google.accounts.oauth2)return Promise.resolve();
+    if(loading)return loading;
+    loading=new Promise((res,rej)=>{const sc=document.createElement("script");sc.src="https://accounts.google.com/gsi/client";sc.async=true;sc.onload=()=>res();sc.onerror=()=>{loading=null;rej(new Error("Google-Anmeldung konnte nicht geladen werden (offline?)."));};document.head.appendChild(sc);});
+    loading.catch(()=>{});
+    return loading;
+  }
+  function requestFullCalendarAccess(){
+    return new Promise((res,rej)=>{
+      const go=()=>{
+        try{
+          client=google.accounts.oauth2.initTokenClient({client_id:GOOGLE_CLIENT_ID,scope:SCOPES,login_hint:email||undefined,
+            callback:r=>{
+              if(r.error){rej(new Error(r.error_description||r.error));return;}
+              if(!google.accounts.oauth2.hasGrantedAllScopes(r,"https://www.googleapis.com/auth/calendar.events")){res({result:"denied"});return;}
+              token=r.access_token;exp=Date.now()+((+r.expires_in||3600)-60)*1000;lsSet("tagwerk:gtoken",{token,exp});
+              res({result:"granted"});
+            },
+            error_callback:e=>rej(new Error(e&&e.type==="popup_closed"?"Anmeldung abgebrochen.":e&&e.type==="popup_failed_to_open"?"Das Anmelde-Fenster wurde blockiert – bitte Pop-ups erlauben.":"Anmeldung fehlgeschlagen."))});
+          client.requestAccessToken();
+        }catch(e){rej(e);}
+      };
+      if(window.google&&google.accounts&&google.accounts.oauth2)go();
+      else preload().then(go,rej);
+    });
+  }
+  function signOut(){try{if(token&&window.google)google.accounts.oauth2.revoke(token,()=>{});}catch(e){}token=null;exp=0;lsSet("tagwerk:gtoken",{});}
+  async function api(method,path,body){
+    if(!token||Date.now()>exp)throw needAuth();
+    let r;
+    try{r=await fetch(API+path,{method,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});}
+    catch(e){throw new Error("Keine Verbindung zu Google.");}
+    if(r.status===401){token=null;lsSet("tagwerk:gtoken",{});throw needAuth();}
+    if(r.status===204||r.status===410)return null;
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error((j.error&&j.error.message)||("Fehler "+r.status));
+    return j;
+  }
+  const enc=encodeURIComponent;
+  async function listCalendars(){
+    const out=[];let page="";
+    do{const j=await api("GET","/users/me/calendarList?maxResults=250"+(page?"&pageToken="+enc(page):""));out.push(...(j.items||[]));page=j.nextPageToken||"";}while(page);
+    const prim=out.find(c=>c.primary);
+    if(prim&&prim.id!==email){email=prim.id;lsSet("tagwerk:gmail",email);}
+    return {result:out.map(c=>({id:c.id,title:c.summaryOverride||c.summary||c.id,accountName:email||"Google",color:c.backgroundColor||null,allowsContentModifications:c.accessRole==="owner"||c.accessRole==="writer",visible:c.selected!==false}))};
+  }
+  const toMs=t=>t.date?(()=>{const [y,m,d]=t.date.split("-").map(Number);return Date.UTC(y,m-1,d);})():Date.parse(t.dateTime);
+  async function listEventsInRange(o){
+    const tmin=new Date(o.from).toISOString(),tmax=new Date(o.to).toISOString();
+    const lists=await Promise.all((o.calendarIds||[]).map(async cid=>{
+      const items=[];let page="";
+      do{const j=await api("GET","/calendars/"+enc(cid)+"/events?singleEvents=true&orderBy=startTime&maxResults=2500&timeMin="+enc(tmin)+"&timeMax="+enc(tmax)+(page?"&pageToken="+enc(page):""));items.push(...(j.items||[]));page=j.nextPageToken||"";}while(page);
+      return items.filter(e=>e.status!=="cancelled"&&e.start).map(e=>{
+        const master=e.recurringEventId||e.id;
+        evCal.set(e.id,cid);evCal.set(master,cid);
+        return {id:e.id,calendarId:cid,title:e.summary||"",location:e.location||"",description:e.description||"",startDate:toMs(e.start),endDate:toMs(e.end||e.start),isAllDay:!!e.start.date,isPartOfSeries:!!(e.recurringEventId||e.recurrence),masterId:master,color:null};
+      });
+    }));
+    return {result:lists.flat()};
+  }
+  function body(o){
+    const b={};
+    if(o.title!=null)b.summary=o.title;
+    if(o.location!=null)b.location=o.location;
+    if(o.description!=null)b.description=o.description;
+    if(o.startDate!=null){
+      if(o.isAllDay){b.start={date:ymd(new Date(o.startDate)),dateTime:null};b.end={date:ymd(addDays(new Date(o.endDate!=null?o.endDate:o.startDate),1)),dateTime:null};}
+      else{const tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"Europe/Berlin";b.start={dateTime:new Date(o.startDate).toISOString(),timeZone:tz,date:null};b.end={dateTime:new Date(o.endDate).toISOString(),timeZone:tz,date:null};}
+    }
+    if(o.recurrence){let r="RRULE:FREQ="+String(o.recurrence.frequency).toUpperCase();if(o.recurrence.end)r+=";UNTIL="+new Date(o.recurrence.end).toISOString().replace(/[-:]/g,"").replace(/\.\d{3}/,"");b.recurrence=[r];}
+    return b;
+  }
+  const clean=b=>{const c=JSON.parse(JSON.stringify(b));for(const k of ["start","end"])if(c[k])for(const f of Object.keys(c[k]))if(c[k][f]===null)delete c[k][f];return c;};
+  const calFor=id=>{const c=evCal.get(String(id));if(!c)throw new Error("Kalender des Termins unbekannt – bitte aktualisieren.");return c;};
+  async function createEvent(o){const j=await api("POST","/calendars/"+enc(o.calendarId)+"/events",clean(body(o)));if(j)evCal.set(j.id,o.calendarId);return {id:j&&j.id};}
+  async function modifyEvent(o){await api("PATCH","/calendars/"+enc(calFor(o.id))+"/events/"+enc(o.id),body(o));}
+  async function deleteEvent(o){await api("DELETE","/calendars/"+enc(calFor(o.id))+"/events/"+enc(o.id));}
+  return {preload,requestFullCalendarAccess,signOut,listCalendars,listEventsInRange,createEvent,modifyEvent,deleteEvent};
+})();
 
 /* ---------- Backup ---------- */
 function openBackup(){
@@ -1093,7 +1191,7 @@ document.addEventListener("click",e=>{
   switch(a){
     case "nav":e.stopPropagation();break;
     case "devconnect":devConnect();break;
-    case "devrefresh":devLoadCals().then(devReload);toast("Aktualisiere Handy-Kalender…");break;
+    case "devrefresh":devLoadCals().then(devReload);toast("Aktualisiere "+provLabel()+"…");break;
     case "devdisconnect":devDisconnect();break;
     case "devmigrate":document.body.classList.remove("drawer");devMigrate();break;
     case "toggledev":{const id=el.dataset.id;state.dev.show[id]=state.dev.show[id]===false;devSavePrefs();devReload();break;}
