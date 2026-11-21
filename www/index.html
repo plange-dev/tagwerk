@@ -1072,25 +1072,38 @@ function openDavForm(){
     <p class="hint"><b>Nextcloud:</b> Lege unter Einstellungen → Sicherheit → „Neues App-Passwort erstellen“ ein eigenes Passwort für Tagwerk an. Die Server-Adresse ist die deiner Nextcloud.${isNative()?"":`<br><b>Am PC/im Browser</b> muss der Server den Zugriff von <code>${esc(location.origin)}</code> erlauben. Bei Nextcloud: App „WebAppPassword“ installieren und diese Adresse unter „WebDAV/CalDAV Allowed Origins“ eintragen.`}</p>
     <p class="hint">Die Zugangsdaten werden nur auf diesem Gerät gespeichert.</p>
     <div class="dev-err" id="dv-err" style="display:none"></div>
+    <div id="dv-cert" style="display:none"></div>
   </form>`);
   $("#dv-url",modal).value=c.base||"";$("#dv-user",modal).value=c.user||"";$("#dv-pass",modal).value=c.pass||"";
   setTimeout(()=>$(c.base?"#dv-pass":"#dv-url",modal).focus(),60);
-  $("#davform",modal).onsubmit=async ev=>{
-    ev.preventDefault();
-    const btn=$("#dv-go",modal),err=$("#dv-err",modal);
-    btn.disabled=true;btn.textContent="Prüfe…";err.style.display="none";
+  let pin=c.pin||null;
+  $("#dv-url",modal).addEventListener("input",()=>{pin=null;});
+  const tryConnect=async()=>{
+    const btn=$("#dv-go",modal),err=$("#dv-err",modal),cb=$("#dv-cert",modal);
+    btn.disabled=true;btn.textContent="Prüfe…";err.style.display="none";cb.style.display="none";
     try{
-      await DavCal.connect($("#dv-url",modal).value.trim(),$("#dv-user",modal).value.trim(),$("#dv-pass",modal).value);
+      await DavCal.connect($("#dv-url",modal).value.trim(),$("#dv-user",modal).value.trim(),$("#dv-pass",modal).value,pin);
       const S=SOURCES.dav;
       S.st.enabled=true;S.st.needAuth=false;S.st.cals=[];srcSavePrefs(S);
       closeModal();
       await srcLoadCals(S);srcReload(S);
       toast(`Verbunden mit ${DavCal.accountName()}`);
     }catch(e){
-      err.textContent=errText(e);err.style.display="";
       btn.disabled=false;btn.textContent="Verbinden";
+      if(e&&e.certUntrusted&&e.cert&&e.cert.fingerprint){
+        const k=e.cert;
+        cb.innerHTML=`<div class="group" style="padding:12px 14px"><b>Unbekanntes Zertifikat</b>
+          <p class="hint" style="margin:6px 0">Der Server nutzt ein ${k.selfSigned?"selbst ausgestelltes":"nicht anerkanntes"} Zertifikat. Vertraue ihm nur, wenn es wirklich dein Server ist – vergleiche den Fingerabdruck z. B. mit der Anzeige im Browser am PC.</p>
+          <p class="hint" style="margin:6px 0;word-break:break-all">Ausgestellt für: ${esc(k.subject||"–")}<br>Gültig bis: ${esc(k.validTo||"–")}<br>SHA-256: <code>${esc(k.fingerprint)}</code></p>
+          <div class="choice"><button type="button" id="dv-trust" style="color:var(--accent)">Diesem Zertifikat vertrauen</button></div></div>`;
+        cb.style.display="";
+        $("#dv-trust",modal).onclick=()=>{pin=k.fingerprint;tryConnect();};
+        return;
+      }
+      err.textContent=errText(e);err.style.display="";
     }
   };
+  $("#davform",modal).onsubmit=ev=>{ev.preventDefault();tryConnect();};
 }
 
 /* ---------- CalDAV (RFC 4791) ---------- */
@@ -1113,13 +1126,19 @@ const DavCal=(()=>{
     const N=nativeHttp();
     if(N){
       let r;
-      try{r=await N.request({url,method,headers,data:o.body||""});}
-      catch(e){throw new Error("Server nicht erreichbar: "+errText(e));}
+      try{r=await N.request({url,method,headers,data:o.body||"",pin:c.pin||undefined});}
+      catch(e){
+        if(e&&e.code==="CERT_UNTRUSTED")throw Object.assign(new Error("Das Zertifikat des Servers ist nicht vertrauenswürdig."),{certUntrusted:true,cert:e.data||{}});
+        throw new Error("Server nicht erreichbar: "+errText(e));
+      }
       return {status:r.status,text:r.data||"",url:r.url||url};
     }
     let r;
     try{r=await fetch(url,{method,headers,body:o.body,credentials:"omit",cache:"no-store",redirect:"follow"});}
-    catch(e){throw new Error("Server nicht erreichbar – oder er blockiert den Zugriff aus dem Browser. Bei Nextcloud die App „WebAppPassword“ installieren und "+location.origin+" als erlaubte Herkunft (WebDAV/CalDAV) eintragen.");}
+    catch(e){
+      const ip=/^https:\/\/(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?\//i.test(url);
+      throw new Error("Server nicht erreichbar – oder er blockiert den Zugriff aus dem Browser."+(ip?" Bei einer IP-Adresse ist das Zertifikat meist selbst ausgestellt: Öffne "+new URL(url).origin+" einmal in diesem Browser und bestätige die Warnung („Erweitert“ → „Weiter“).":"")+" Außerdem muss der Server "+location.origin+" erlauben (Nextcloud: App „WebAppPassword“ → WebDAV/CalDAV Allowed Origins).");
+    }
     return {status:r.status,text:await r.text(),url:r.url||url};
   }
   const xml=t=>{const d=new DOMParser().parseFromString(t,"application/xml");if(d.getElementsByTagName("parsererror").length)throw new Error("Ungültige Antwort vom Server.");return d;};
@@ -1131,26 +1150,32 @@ const DavCal=(()=>{
     const body=`<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:" xmlns:c="${NS.c}" xmlns:a="${NS.a}"><d:prop>${props}</d:prop></d:propfind>`;
     const r=await http("PROPFIND",url,{headers:{"Depth":String(depth),"Content-Type":"application/xml; charset=utf-8"},body},c);
     if(r.status===401)throw authErr();if(r.status===403)throw Object.assign(new Error("Zugriff verweigert (HTTP 403)."),{status:403});
+    if(r.status===400&&/untrusted domain|nicht vertrauensw|trusted_domains|trusted domain/i.test(r.text||""))
+      throw Object.assign(new Error("Nextcloud lehnt die Adresse „"+new URL(url).host+"“ ab. Trage sie in der config.php deiner Nextcloud unter 'trusted_domains' ein (oder per occ: config:system:set trusted_domains 2 --value="+new URL(url).hostname+")."),{fatal:true});
     if(r.status!==207)throw Object.assign(new Error("HTTP "+r.status),{status:r.status});
     return {doc:xml(r.text),url:r.url};
   }
-  async function connect(base,user,pass){
+  async function connect(base,user,pass,pin){
     if(!/^https?:\/\//i.test(base))base="https://"+base;
     if(/^http:\/\//i.test(base)&&!/^http:\/\/(localhost|127\.)/i.test(base))throw new Error("Bitte eine sichere https-Adresse verwenden.");
-    const c={base:base.replace(/\/+$/,""),user,pass};
+    const c={base:base.replace(/\/+$/,""),user,pass,pin:pin||null};
     const u=new URL(c.base);
     const cands=[];
     if(u.pathname&&u.pathname!=="/")cands.push(c.base+"/");
     cands.push(u.origin+"/remote.php/dav/",u.origin+"/.well-known/caldav",u.origin+"/",u.origin+"/dav/",u.origin+"/caldav/");
-    let principal=null,lastErr=null;
+    let principal=null,lastErr=null;const diag=[];
     for(const url of cands){
       try{
         const {doc,url:fin}=await propfind(url,0,"<d:current-user-principal/>",c);
         const h=one(one(doc,NS.d,"current-user-principal"),NS.d,"href");
         if(h){principal=abs(h.textContent.trim(),fin);break;}
-      }catch(e){if(e.needAuth)throw e;lastErr=e;}
+        diag.push(new URL(url).pathname+": keine Angabe");
+      }catch(e){if(e.needAuth||e.certUntrusted||e.fatal)throw e;lastErr=e;diag.push(new URL(url).pathname+": "+(e.status?"HTTP "+e.status:errText(e)));}
     }
-    if(!principal)throw new Error("Unter dieser Adresse wurde kein CalDAV-Dienst gefunden."+(lastErr&&/blockiert/.test(lastErr.message)?" "+lastErr.message:""));
+    if(!principal){
+      if(lastErr&&/nicht erreichbar/.test(lastErr.message))throw lastErr;
+      throw new Error("Unter dieser Adresse wurde kein CalDAV-Dienst gefunden. Geprüft: "+diag.join(" · "));
+    }
     const {doc,url:fin}=await propfind(principal,0,"<c:calendar-home-set/>",c);
     const hh=one(one(doc,NS.c,"calendar-home-set"),NS.d,"href");
     c.home=hh?abs(hh.textContent.trim(),fin):principal;
