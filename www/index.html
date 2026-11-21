@@ -1129,7 +1129,10 @@ const DavCal=(()=>{
       try{r=await N.request({url,method,headers,data:o.body||"",pin:c.pin||undefined});}
       catch(e){
         if(e&&e.code==="CERT_UNTRUSTED")throw Object.assign(new Error("Das Zertifikat des Servers ist nicht vertrauenswürdig."),{certUntrusted:true,cert:e.data||{}});
-        throw new Error("Server nicht erreichbar: "+errText(e));
+        const m=errText(e),u=new URL(url);
+        if(/failed to connect|ECONNREFUSED|timeout|timed out|unreachable|No route/i.test(m))
+          throw new Error("Server nicht erreichbar ("+u.host+(u.port?"":":"+(u.protocol==="https:"?"443":"80"))+"). Prüfe: Ist das Handy im selben WLAN (nicht mobile Daten/VPN)? Läuft die Nextcloud auf diesem Port? Öffne die Adresse zum Test im Handy-Browser – nutzt du am PC z. B. :8443 oder :8080, gib den Port mit an (https://"+u.hostname+":8443).");
+        throw new Error("Server nicht erreichbar: "+m);
       }
       return {status:r.status,text:r.data||"",url:r.url||url};
     }
