@@ -433,7 +433,8 @@ function savePrefs(){lsSet("tagwerk:prefs",{view:state.view,lastCal:state.lastCa
 
 /* ---------- Calendars & holidays ---------- */
 const calOf=id=>{
-  if(typeof id==="string"&&id.startsWith("dev:"))return state.dev.cals.find(c=>c.id===id)||{id,name:provLabel(),color:"#8A7B6A",device:true,writable:false};
+  const S=srcOfCal(id);
+  if(S)return S.st.cals.find(c=>c.id===id)||{id,name:S.label(),color:"#8A7B6A",device:true,writable:false};
   return state.cals.find(c=>c.id===id)||state.cals[0];
 };
 const colorOf=id=>(calOf(id)||{}).color||"#888";
@@ -481,14 +482,13 @@ function occurrences(from,to){
       if(rep==="none")break;
     }
   }
-  if(state.dev.enabled){
-    for(const inst of state.dev.events){
-      const cal=calOf("dev:"+inst.calendarId);
-      if(state.dev.show[cal.id]===false)continue;
-      let a,b;
-      if(inst.isAllDay){const x=new Date(inst.startDate),y=new Date(inst.endDate);a=new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate());b=new Date(y.getUTCFullYear(),y.getUTCMonth(),y.getUTCDate());if(b<=a)b=addDays(a,1);}
-      else{a=new Date(inst.startDate);b=new Date(inst.endDate);if(b<=a)b=new Date(a.getTime()+30*60000);}
-      if(a<to&&b>from)out.push({ev:inst._ev,start:a,end:b,allDay:!!inst.isAllDay,color:normColor(inst.color)||cal.color,title:inst.title||"Ohne Titel",key:inst._key});
+  for(const S of srcList()){
+    if(!S.st.enabled)continue;
+    for(const inst of S.st.events){
+      const cal=calOf(inst._ev.cal);
+      if(S.st.show[cal.id]===false)continue;
+      const [a,b]=instRange(inst);
+      if(a<to&&b>from)out.push({ev:inst._ev,start:a,end:b,allDay:!!inst.isAllDay,color:inst._color||cal.color,title:inst.title||"Ohne Titel",key:inst._key});
     }
   }
   if(state.holidays){
@@ -571,7 +571,7 @@ function agendaItem(o,day){
   if(o.holiday)return `<div class="agenda-item holi" style="--c:var(--line)"><time><b>Feiertag</b></time><div class="bar"></div><div><div class="t">${esc(o.title)}</div></div><span></span></div>`;
   const tl=timeLabel(o,day);
   const time=o.allDay?`<b>ganztägig</b>`:`<b>${tl[0]}</b>${tl[1]}`;
-  const cc=calOf(o.ev.cal);const sub=[cc?(cc.device?provMark():"")+cc.name:"",o.ev.location,o.ev.repeat&&o.ev.repeat!=="none"?"↻ "+(REP[o.ev.repeat]||"Serie"):""].filter(Boolean).map(esc).join(" · ");
+  const cc=calOf(o.ev.cal);const sub=[cc?(cc.device?(srcOfCal(cc.id)||SOURCES.dev).mark():"")+cc.name:"",o.ev.location,o.ev.repeat&&o.ev.repeat!=="none"?"↻ "+(REP[o.ev.repeat]||"Serie"):""].filter(Boolean).map(esc).join(" · ");
   return `<div class="agenda-item" style="--c:${o.color}" data-act="open" data-id="${esc(o.ev.id)}" data-date="${ymd(o.start)}"><time>${time}</time><div class="bar"></div><div><div class="t">${esc(o.title)}</div>${sub?`<div class="s">${sub}</div>`:""}</div>${o.ev.location?navBtn(o.ev.location,true):"<span></span>"}</div>`;
 }
 function dayPanel(d){
@@ -633,7 +633,7 @@ function renderSearch(){
   const q=state.search.trim().toLowerCase();
   const hidden=new Set(state.cals.filter(c=>c.visible===false).map(c=>c.id));
   const devItems=[];const seen=new Set();
-  if(state.dev.enabled)for(const inst of state.dev.events){const m=String(inst.masterId||inst.id);if(seen.has(m))continue;seen.add(m);const ev=inst._ev;if(state.dev.show[ev.cal]===false)continue;const st=inst.isAllDay?(()=>{const x=new Date(inst.startDate);return new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate());})():new Date(inst.startDate);devItems.push({id:ev.id,title:inst.title,location:inst.location,notes:inst.description,start:toLocal(st),allDay:!!inst.isAllDay,cal:ev.cal,repeat:ev.repeat});}
+  for(const S of srcList())if(S.st.enabled)for(const inst of S.st.events){const m=String(inst.masterId||inst.id);if(seen.has(m))continue;seen.add(m);const ev=inst._ev;if(S.st.show[ev.cal]===false)continue;const st=inst.isAllDay?(()=>{const x=new Date(inst.startDate);return new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate());})():new Date(inst.startDate);devItems.push({id:ev.id,title:inst.title,location:inst.location,notes:inst.description,start:toLocal(st),allDay:!!inst.isAllDay,cal:ev.cal,repeat:ev.repeat});}
   const res=[...state.events.values(),...devItems].filter(e=>!hidden.has((calOf(e.cal)||{}).id)&&[e.title,e.location,e.notes].some(x=>x&&String(x).toLowerCase().includes(q))).sort((a,b)=>parseLocal(b.start)-parseLocal(a.start));
   let h=`<div class="list"><h3>${res.length} Treffer für „${esc(state.search.trim())}“</h3>`;
   if(res.length){
@@ -675,11 +675,12 @@ function closeModal(fromPop){if(modal.hidden)return;modal.hidden=true;modal.inne
 window.addEventListener("popstate",()=>{if(!modal.hidden)closeModal(true);else document.body.classList.remove("drawer");});
 modal.addEventListener("click",e=>{if(e.target===modal||e.target.closest("[data-close]"))closeModal();});
 const REP={none:"Nie",daily:"Täglich",weekly:"Wöchentlich",monthly:"Monatlich",yearly:"Jährlich"};
-function lastCal(){if(state.dev.enabled&&state.lastCal&&String(state.lastCal).startsWith("dev:")){const d=state.dev.cals.find(c=>c.id===state.lastCal&&c.writable);if(d)return d.id;}const v=state.cals.filter(c=>c.visible!==false);const l=state.cals.find(c=>c.id===state.lastCal);return (l||v[0]||state.cals[0]).id;}
+function lastCal(){const LS=srcOfCal(state.lastCal);if(LS){const d=srcWritable(LS).find(c=>c.id===state.lastCal);if(d)return d.id;}const v=state.cals.filter(c=>c.visible!==false);const l=state.cals.find(c=>c.id===state.lastCal);return (l||v[0]||state.cals[0]).id;}
 
 function openEditor(id,opts={}){
-  const dinst=id&&String(id).startsWith("d:")?state.dev.byKey.get(id):null;
-  const old=dinst?devToEv(dinst):(id?state.events.get(id):null);
+  const IS=srcOfInst(id);
+  const dinst=IS?IS.st.byKey.get(id):null;
+  const old=dinst?srcToEv(IS,dinst):(id?state.events.get(id):null);
   if(id&&!old)return;
   const lockSeries=!!(old&&old.device&&old.series);
   let s,e,allDay;
@@ -705,13 +706,13 @@ function openEditor(id,opts={}){
       <div class="row"><span>Ende</span><div class="dt"><input type="date" id="f-ed" required><input type="time" id="f-et" class="tm"></div></div>
     </div>
     <div class="group">
-      <div class="row"><span>Kalender</span><div class="calpick"><i id="f-calc"></i><select id="f-cal"><optgroup label="Tagwerk (nur dieses Gerät)">${state.cals.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>${devWritable().length?`<optgroup label="${isNative()?"Handy-Konten":"Google-Konto"} (synchronisiert)">${devWritable().map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</optgroup>`:""}</select></div></div>
+      <div class="row"><span>Kalender</span><div class="calpick"><i id="f-calc"></i><select id="f-cal"><optgroup label="Tagwerk (nur dieses Gerät)">${state.cals.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>${srcList().map(S=>{const w=srcWritable(S);return w.length?`<optgroup label="${esc(S.title())} (synchronisiert)">${w.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</optgroup>`:"";}).join("")}</select></div></div>
       <div class="row"><span>Wiederholen</span><select id="f-rep">${Object.entries(REP).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select></div>
       <div class="row" id="r-until"><span>Endet am</span><input type="date" id="f-until"></div>
     </div>
     <div class="group"><input id="f-loc" placeholder="Ort oder Adresse – z. B. Hauptstraße 5, 10115 Berlin" maxlength="200" autocomplete="street-address"><div class="navrow" id="f-nav"></div><textarea id="f-notes" placeholder="Notizen" rows="3" maxlength="5000"></textarea></div>
     ${lockSeries?`<p class="hint">Serie aus ${isNative()?"deinem Handy-Kalender":"Google Kalender"}: Titel, Ort und Notizen gelten für die ganze Serie. Datum und Wiederholung änderst du ${isNative()?"in der Kalender-App deines Kontos":"direkt in Google Kalender"}.</p>`:old&&rep!=="none"?`<p class="hint">Änderungen gelten für die ganze Serie.</p>`:""}
-    ${old&&old.device?`<p class="hint">${provMark()}Wird mit „${esc(calOf(old.cal).name)}“ synchronisiert.</p>`:""}
+    ${old&&old.device?`<p class="hint">${old.src.mark()}Wird mit „${esc(calOf(old.cal).name)}“ synchronisiert.</p>`:""}
     ${old?`<button type="button" class="danger" id="f-del">Termin löschen</button>`:""}
   </form>`);
   const f=id=>$("#"+id,modal);
@@ -765,7 +766,7 @@ function openEditor(id,opts={}){
     };
     state.lastCal=out.cal;savePrefs();
     closeModal();
-    if((old&&old.device)||String(out.cal).startsWith("dev:")){deviceSave(old,out);return;}
+    if((old&&old.device)||srcOfCal(out.cal)){deviceSave(old,out);return;}
     saveEvent(out);
     if(!old){state.selected=startOfDay(ns);toast("Termin gesichert");}
   };
@@ -817,7 +818,7 @@ function openCalEditor(id){
   };
 }
 
-/* ---------- Handy-Kalender (Google, Samsung, Outlook … über Android) ---------- */
+/* ---------- Synchronisierte Quellen (Handy-Konten/Google und CalDAV) ---------- */
 let _devP=null;
 function devPlugin(){
   if(_devP)return _devP;
@@ -832,61 +833,92 @@ function normColor(c){
   if(/^#[0-9a-f]{8}$/i.test(c)){if(c.slice(1,3)==="00")return null;return "#"+c.slice(3);}
   return /^#[0-9a-f]{6}$/i.test(c)?c:null;
 }
-const devWritable=()=>state.dev.enabled?state.dev.cals.filter(c=>c.writable):[];
-function devSavePrefs(){lsSet(DEV_KEY,{enabled:state.dev.enabled,show:state.dev.show});}
 const errText=e=>(e&&(e.message||e.errorMessage))||"Unbekannter Fehler";
-async function devConnect(){
-  const P=devPlugin();
+
+const SOURCES={};
+function mkSource(key,o){
+  const st=Object.assign({enabled:false,show:{}},lsGet(o.prefsKey)||{},{cals:[],events:[],byKey:new Map(),from:null,to:null,loading:false,error:null,needAuth:false});
+  return SOURCES[key]=Object.assign({key,st},o);
+}
+const srcList=()=>Object.values(SOURCES);
+const srcOfCal=id=>typeof id==="string"?srcList().find(S=>id.startsWith(S.calPfx))||null:null;
+const srcOfInst=k=>typeof k==="string"?srcList().find(S=>k.startsWith(S.instPfx))||null:null;
+const srcWritable=S=>S.st.enabled&&S.P()?S.st.cals.filter(c=>c.writable):[];
+const allWritable=()=>srcList().flatMap(srcWritable);
+const devWritable=allWritable;
+function srcSavePrefs(S){lsSet(S.prefsKey,{enabled:S.st.enabled,show:S.st.show});}
+
+mkSource("dev",{calPfx:"dev:",instPfx:"d:",prefsKey:DEV_KEY,P:devPlugin,
+  label:()=>provLabel(),mark:()=>provMark(),title:()=>isNative()?"Handy-Konten":"Google-Konto",
+  colorOf:inst=>normColor(inst.color),
+  calColor:c=>normColor(c.color)});
+mkSource("dav",{calPfx:"dav:",instPfx:"c:",prefsKey:"tagwerk:dav",P:()=>DavCal.configured()?DavCal:null,
+  label:()=>DavCal.accountName()||"CalDAV",mark:()=>"🌐 ",title:()=>"CalDAV-Konto",
+  colorOf:()=>null,
+  calColor:c=>{const x=c.color;if(!x||typeof x!=="string")return null;if(/^#[0-9a-f]{8}$/i.test(x))return x.slice(0,7);return /^#[0-9a-f]{6}$/i.test(x)?x:null;}});
+state.dev=SOURCES.dev.st;
+
+async function srcConnect(S){
+  if(S.key==="dav"){openDavForm();return;}
+  const P=S.P();
   if(!P){toast(isNative()?"Kalender-Zugriff ist nicht verfügbar.":"Die Google-Verbindung ist noch nicht eingerichtet.");return;}
   try{
     const r=await P.requestFullCalendarAccess();
     if(r&&r.result==="granted"){
-      state.dev.enabled=true;state.dev.needAuth=false;devSavePrefs();
-      await devLoadCals();devReload();
-      toast(provLabel()+" verbunden");
+      S.st.enabled=true;S.st.needAuth=false;srcSavePrefs(S);
+      await srcLoadCals(S);srcReload(S);
+      toast(S.label()+" verbunden");
     }else toast(isNative()?"Ohne Kalender-Zugriff geht es nicht. Erlauben unter Einstellungen → Apps → Tagwerk → Berechtigungen.":"Google hat den Zugriff nicht erlaubt.");
   }catch(e){toast("Verbinden fehlgeschlagen: "+errText(e));}
 }
-function devDisconnect(){
-  openModal(`<div class="sheet"><div class="sheet-head"><span></span><h3>${provLabel()} trennen?</h3><span></span></div>
-    <p class="hint">Die Termine deiner Konten werden in Tagwerk nicht mehr angezeigt. In deinen Konten (z. B. Google) bleibt alles erhalten.</p>
+function srcDisconnect(S){
+  openModal(`<div class="sheet"><div class="sheet-head"><span></span><h3>${esc(S.label())} trennen?</h3><span></span></div>
+    <p class="hint">Die Termine dieses Kontos werden in Tagwerk nicht mehr angezeigt. Im Konto selbst bleibt alles erhalten.${S.key==="dav"?" Die Zugangsdaten werden von diesem Gerät gelöscht.":""}</p>
     <div class="choice"><button class="red" id="dd-yes">Trennen</button><button data-close>Abbrechen</button></div></div>`);
-  $("#dd-yes",modal).onclick=()=>{closeModal();if(!isNative())GoogleCal.signOut();state.dev.enabled=false;state.dev.events=[];state.dev.byKey=new Map();state.dev.from=null;if(String(state.lastCal).startsWith("dev:")){state.lastCal=null;savePrefs();}devSavePrefs();render();};
+  $("#dd-yes",modal).onclick=()=>{
+    closeModal();
+    if(S.key==="dev"&&!isNative())GoogleCal.signOut();
+    if(S.key==="dav")DavCal.forget();
+    Object.assign(S.st,{enabled:false,events:[],byKey:new Map(),from:null,to:null,cals:[],error:null,needAuth:false});
+    if(srcOfCal(state.lastCal)===S){state.lastCal=null;savePrefs();}
+    srcSavePrefs(S);render();
+  };
 }
-async function devLoadCals(){
-  const P=devPlugin();if(!P)return;
+async function srcLoadCals(S){
+  const P=S.P();if(!P)return;
   try{
     const r=await P.listCalendars();
-    state.dev.cals=(r&&r.result||[]).map(c=>({id:"dev:"+c.id,rawId:String(c.id),name:c.title||c.internalTitle||"Kalender",account:c.accountName||"",color:normColor(c.color)||"#8A7B6A",writable:c.allowsContentModifications!==false,device:true,sysVisible:c.visible!==false}))
+    S.st.cals=(r&&r.result||[]).map(c=>({id:S.calPfx+c.id,rawId:String(c.id),name:c.title||c.internalTitle||"Kalender",account:c.accountName||"",color:S.calColor(c)||"#8A7B6A",writable:c.allowsContentModifications!==false,device:true,sysVisible:c.visible!==false,src:S.key}))
       .sort((a,b)=>a.account.localeCompare(b.account)||a.name.localeCompare(b.name));
-    for(const c of state.dev.cals)if(!(c.id in state.dev.show))state.dev.show[c.id]=c.sysVisible;
-    devSavePrefs();state.dev.error=null;
-  }catch(e){if(e&&e.needAuth)state.dev.needAuth=true;state.dev.error=e&&e.needAuth?null:"Kalender konnten nicht gelesen werden: "+errText(e);}
+    for(const c of S.st.cals)if(!(c.id in S.st.show))S.st.show[c.id]=c.sysVisible;
+    srcSavePrefs(S);S.st.error=null;S.st.needAuth=false;
+  }catch(e){if(e&&e.needAuth)S.st.needAuth=true;S.st.error=e&&e.needAuth?null:"Kalender konnten nicht gelesen werden: "+errText(e);}
 }
-function devReload(){state.dev.from=null;state.dev.to=null;render();}
-function devEnsureView(){
-  if(!state.dev.enabled||!devPlugin())return;
+function srcReload(S){(S?[S]:srcList()).forEach(x=>{x.st.from=null;x.st.to=null;});render();}
+const devReload=()=>srcReload();
+function srcEnsureView(){
   const c=state.cursor;
   const from=addDays(startOfWeek(new Date(c.getFullYear(),c.getMonth(),1)),-7);
   const mini=startOfWeek(state.mini);
-  devEnsure(from<mini?from:mini,addDays(from,56));
+  for(const S of srcList())if(S.st.enabled&&S.P())srcEnsure(S,from<mini?from:mini,addDays(from,56));
 }
-async function devEnsure(from,to){
-  const d=state.dev;
+async function srcEnsure(S,from,to){
+  const d=S.st;
   if(d.loading)return;
   if(d.from&&from>=d.from&&to<=d.to)return;
   const a=addDays(from,-31),b=addDays(to,62);
   d.loading=true;
   try{
-    if(!d.cals.length)await devLoadCals();
+    if(!d.cals.length)await srcLoadCals(S);
     const ids=d.cals.filter(c=>d.show[c.id]!==false).map(c=>c.rawId);
     let list=[];
-    if(ids.length){const r=await devPlugin().listEventsInRange({from:a.getTime(),to:b.getTime(),calendarIds:ids});list=(r&&r.result)||[];}
+    if(ids.length){const r=await S.P().listEventsInRange({from:a.getTime(),to:b.getTime(),calendarIds:ids});list=(r&&r.result)||[];}
     const by=new Map();
     for(const inst of list){
-      const key="d:"+inst.id+":"+inst.startDate;
+      const key=S.instPfx+inst.id+"|"+inst.startDate;
       inst._key=key;
-      inst._ev={id:key,title:inst.title,cal:"dev:"+inst.calendarId,location:inst.location||"",repeat:inst.isPartOfSeries?"series":"none"};
+      inst._ev={id:key,title:inst.title,cal:S.calPfx+inst.calendarId,location:inst.location||"",repeat:inst.isPartOfSeries?"series":"none"};
+      inst._color=S.colorOf(inst);
       by.set(key,inst);
     }
     d.events=list;d.byKey=by;d.error=null;
@@ -894,11 +926,16 @@ async function devEnsure(from,to){
   d.from=a;d.to=b;d.loading=false;
   render();
 }
-function devToEv(inst){
-  let s,e;
-  if(inst.isAllDay){const x=new Date(inst.startDate),y=new Date(inst.endDate);s=new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate());e=addDays(new Date(y.getUTCFullYear(),y.getUTCMonth(),y.getUTCDate()),-1);if(e<s)e=new Date(s);}
-  else{s=new Date(inst.startDate);e=new Date(inst.endDate);}
-  return {id:inst._key,title:inst.title||"",allDay:!!inst.isAllDay,start:toLocal(s),end:toLocal(e),cal:"dev:"+inst.calendarId,location:inst.location||"",notes:inst.description||"",repeat:"none",device:inst,series:!!inst.isPartOfSeries};
+function instRange(inst){
+  let a,b;
+  if(inst.isAllDay){const x=new Date(inst.startDate),y=new Date(inst.endDate);a=new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate());b=new Date(y.getUTCFullYear(),y.getUTCMonth(),y.getUTCDate());if(b<=a)b=addDays(a,1);}
+  else{a=new Date(inst.startDate);b=new Date(inst.endDate);if(b<=a)b=new Date(a.getTime()+30*60000);}
+  return [a,b];
+}
+function srcToEv(S,inst){
+  const [s,b]=instRange(inst);
+  const e=inst.isAllDay?addDays(b,-1):b;
+  return {id:inst._key,title:inst.title||"",allDay:!!inst.isAllDay,start:toLocal(s),end:toLocal(e<s?s:e),cal:S.calPfx+inst.calendarId,location:inst.location||"",notes:inst.description||"",repeat:"none",device:inst,src:S,series:!!inst.isPartOfSeries};
 }
 function devOpts(ev){
   const s=parseLocal(ev.start),e=parseLocal(ev.end);
@@ -908,91 +945,455 @@ function devOpts(ev){
   if(ev.repeat&&ev.repeat!=="none"&&REP[ev.repeat]){o.recurrence={frequency:ev.repeat,interval:1};if(ev.until)o.recurrence.end=addDays(parseLocal(ev.until),1).getTime()-1;}
   return o;
 }
+function authMsg(S){return S.key==="dav"?"Anmeldung beim CalDAV-Server fehlgeschlagen – bitte Zugangsdaten prüfen.":"Google-Anmeldung abgelaufen – bitte links erneut anmelden und nochmal speichern.";}
 async function deviceSave(old,out){
-  const P=devPlugin();
-  if(!P){toast(provLabel()+" ist hier nicht verfügbar.");return;}
-  const tgt=String(out.cal).startsWith("dev:")?out.cal.slice(4):null;
+  const tS=srcOfCal(out.cal),oS=old&&old.device?old.src:null;
+  const tgt=tS?out.cal.slice(tS.calPfx.length):null;
+  if((tS&&!tS.P())||(oS&&!oS.P())){toast("Dieses Konto ist hier nicht verfügbar.");return;}
   const o=devOpts(out);
+  let errS=tS||oS;
   try{
-    if(old&&old.device){
-      const inst=old.device;
-      if(tgt&&tgt===String(inst.calendarId)){
+    if(oS){
+      const inst=old.device,P=oS.P();
+      if(tS===oS&&tgt===String(inst.calendarId)){
         if(old.series)await P.modifyEvent({id:String(inst.masterId||inst.id),title:o.title,location:o.location,description:o.description});
         else await P.modifyEvent(Object.assign({id:String(inst.id)},o));
       }else{
         if(old.series){toast("Serien können nicht verschoben werden.");return;}
-        if(tgt)await P.createEvent(Object.assign({calendarId:tgt},o));
+        if(tS)await tS.P().createEvent(Object.assign({calendarId:tgt},o));
         else saveEvent(Object.assign({},out,{id:uid(),created:Date.now(),updated:Date.now()}));
+        errS=oS;
         await P.deleteEvent({id:String(inst.id),span:0});
       }
-      toast(`Gesichert in „${calOf(tgt?out.cal:old.cal).name}“`);
+      toast(`Gesichert in „${calOf(tS?out.cal:old.cal).name}“`);
     }else{
-      await P.createEvent(Object.assign({calendarId:tgt},o));
+      await tS.P().createEvent(Object.assign({calendarId:tgt},o));
       if(old)deleteEvent(old.id);
       toast(`Eingetragen in „${calOf(out.cal).name}“`);
     }
-  }catch(e){if(e&&e.needAuth){state.dev.needAuth=true;toast("Google-Anmeldung abgelaufen – bitte links erneut anmelden und nochmal speichern.");}else toast(provLabel()+": "+errText(e));}
-  devReload();
+  }catch(e){if(e&&e.needAuth){errS.st.needAuth=true;toast(authMsg(errS));}else toast((errS?errS.label():"Konto")+": "+errText(e));}
+  srcReload();
 }
 function askDeleteDevice(old){
-  const inst=old.device;
+  const inst=old.device,S=old.src;
   openModal(`<div class="sheet"><div class="sheet-head"><span></span><h3>„${esc(old.title||"Ohne Titel")}“ löschen?</h3><span></span></div>
     <p class="hint">Der Termin wird auch in „${esc(calOf(old.cal).name)}“ gelöscht.</p><div class="choice">
     ${old.series?`<button class="red" data-del="one">Nur diesen Termin</button><button class="red" data-del="all">Ganze Serie löschen</button>`:`<button class="red" data-del="one">Löschen</button>`}
     <button data-close>Abbrechen</button></div></div>`);
   modal.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     closeModal();
-    const P=devPlugin();
+    const P=S.P();
     try{
       if(b.dataset.del==="all")await P.deleteEvent({id:String(inst.masterId||inst.id),span:1});
       else if(old.series)await P.deleteEvent({id:String(inst.id),span:0,instanceDate:inst.startDate});
       else await P.deleteEvent({id:String(inst.id),span:0});
       toast("Termin gelöscht");
-    }catch(e){toast("Löschen fehlgeschlagen: "+errText(e));}
-    devReload();
+    }catch(e){if(e&&e.needAuth){S.st.needAuth=true;toast(authMsg(S));}else toast("Löschen fehlgeschlagen: "+errText(e));}
+    srcReload(S);
   });
 }
+function calOptionLabel(c){const S=srcOfCal(c.id);return esc(c.name)+(c.account&&c.account!==c.name?" – "+esc(c.account):"")+(S&&srcList().filter(x=>x.st.enabled).length>1?" ("+esc(S.title())+")":"");}
 function devMigrate(){
-  const targets=devWritable();
+  const targets=allWritable();
   if(!targets.length){toast("Kein beschreibbarer Kalender gefunden.");return;}
   const n=state.events.size;
   openModal(`<div class="sheet"><div class="sheet-head"><button class="link" data-close>Abbrechen</button><h3>Termine übertragen</h3><span style="width:60px"></span></div>
     <p class="hint">Deine ${n} Tagwerk-Termine werden in das gewählte Konto kopiert und danach aus Tagwerk entfernt. So sind sie überall synchronisiert. Ausgelassene Einzeltermine einer Serie werden dabei nicht übernommen.</p>
-    <div class="group"><div class="row"><span>Ziel</span><select id="m-tgt">${targets.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</select></div></div>
+    <div class="group"><div class="row"><span>Ziel</span><select id="m-tgt">${targets.map(c=>`<option value="${esc(c.id)}">${calOptionLabel(c)}</option>`).join("")}</select></div></div>
     <div class="choice"><button id="m-go" style="color:var(--accent)">${n} Termine übertragen</button></div></div>`);
   $("#m-go",modal).onclick=async()=>{
-    const tgt=$("#m-tgt",modal).value.slice(4);closeModal();
-    const P=devPlugin();let ok=0,fail=0;
+    const id=$("#m-tgt",modal).value,S=srcOfCal(id),tgt=id.slice(S.calPfx.length);closeModal();
+    const P=S.P();let ok=0,fail=0;
     toast("Übertrage…");
     for(const ev of [...state.events.values()]){
       try{await P.createEvent(Object.assign({calendarId:tgt},devOpts(ev)));deleteEvent(ev.id);ok++;}catch(e){fail++;}
     }
     toast(`${ok} übertragen${fail?`, ${fail} fehlgeschlagen`:""}`);
-    devReload();
+    srcReload(S);
   };
+}
+function srcCalsHtml(S){
+  const d=S.st,nat=isNative();let h="",acc=null;
+  for(const c of d.cals){
+    if(c.account!==acc){acc=c.account;h+=`<div class="acct">${esc(acc||(S.key==="dev"?(nat?"Auf dem Gerät":"Google"):"CalDAV"))}</div>`;}
+    h+=`<div class="cal-item ${d.show[c.id]!==false?"on":""}" data-act="toggledev" data-src="${S.key}" data-id="${esc(c.id)}" style="--c:${esc(c.color)}"><div class="cal-box"></div><span>${esc(c.name)}${c.writable?"":" 🔒"}</span></div>`;
+  }
+  if(!d.cals.length&&!d.error&&!d.needAuth)h+=`<p class="side-note">${d.loading?"Lädt…":S.key==="dev"&&nat?"Keine Kalender gefunden. Füge in den Android-Einstellungen unter „Konten“ z. B. dein Google-Konto hinzu.":"Keine Kalender gefunden."}</p>`;
+  if(d.error)h+=`<div class="dev-err">${esc(d.error)}</div>`;
+  return h;
+}
+function renderDevSection(){
+  const S=SOURCES.dev,d=S.st,nat=isNative(),title=S.title();
+  if(!nat&&!googleAvailable())return FRAMED?`<div class="side-title">Google-Konto</div><p class="side-note">Die Google-Verbindung gibt es in der installierten PC-App und in der Android-App.</p>`:"";
+  if(!nat)GoogleCal.preload();
+  if(!d.enabled)return nat?`<div class="side-title">${title}</div><p class="side-note">Zeigt die Termine aller Konten auf deinem Handy (Google, Samsung, Outlook …) und trägt neue Termine dort ein – synchron in beide Richtungen.</p><button class="pill wide" data-act="devconnect" data-src="dev">Mit Handy-Konten verbinden</button>`
+    :`<div class="side-title">${title}</div><p class="side-note">Melde dich mit Google an, um deine Google-Kalender hier zu sehen und Termine direkt dort einzutragen.</p><button class="pill wide" data-act="devconnect" data-src="dev">Mit Google verbinden</button>`;
+  let h=`<div class="side-title">${title} <button data-act="devrefresh" data-src="dev" aria-label="Aktualisieren">↻ Aktualisieren</button></div>`;
+  if(d.needAuth)h+=`<p class="side-note">Die Google-Anmeldung ist abgelaufen.</p><button class="pill wide" data-act="devconnect" data-src="dev" style="margin-bottom:8px">Erneut anmelden</button>`;
+  h+=srcCalsHtml(S);
+  h+=`<button class="opt-btn" data-act="devdisconnect" data-src="dev" style="color:var(--muted)">Verbindung trennen</button>`;
+  return h;
+}
+function renderDavSection(){
+  const S=SOURCES.dav,d=S.st;
+  if(FRAMED)return `<div class="side-title">CalDAV-Konto</div><p class="side-note">Nextcloud &amp; Co. verbindest du in der installierten PC-App oder in der Android-App.</p>`;
+  if(!d.enabled||!S.P())return `<div class="side-title">CalDAV-Konto</div><p class="side-note">Nextcloud, mailbox.org, Posteo und andere CalDAV-Dienste – Termine synchron in beide Richtungen.</p><button class="pill wide" data-act="devconnect" data-src="dav">CalDAV-Konto verbinden</button>`;
+  let h=`<div class="side-title">CalDAV-Konto <button data-act="devrefresh" data-src="dav" aria-label="Aktualisieren">↻ Aktualisieren</button></div>`;
+  if(d.needAuth)h+=`<p class="side-note">Der Server hat die Anmeldung abgelehnt.</p><button class="pill wide" data-act="devconnect" data-src="dav" style="margin-bottom:8px">Zugangsdaten ändern</button>`;
+  h+=srcCalsHtml(S);
+  h+=`<button class="opt-btn" data-act="devdisconnect" data-src="dav" style="color:var(--muted)">Verbindung trennen</button>`;
+  return h;
 }
 function renderDev(){
   const el=$("#devsec");if(!el)return;
-  const d=state.dev;
-  const nat=isNative(),title=nat?"Handy-Konten":"Google-Konto";
-  if(!nat&&!googleAvailable()){el.innerHTML=`<div class="side-title">Google-Konto</div><p class="side-note">${FRAMED?"Die Google-Verbindung gibt es in der installierten PC-App und in der Android-App.":"Die Google-Verbindung ist noch nicht eingerichtet."}</p>`;return;}
-  if(!nat)GoogleCal.preload();
-  if(!d.enabled){el.innerHTML=nat?`<div class="side-title">${title}</div><p class="side-note">Zeigt die Termine aller Konten auf deinem Handy (Google, Samsung, Outlook …) und trägt neue Termine dort ein – synchron in beide Richtungen.</p><button class="pill wide" data-act="devconnect">Mit Handy-Konten verbinden</button>`
-    :`<div class="side-title">${title}</div><p class="side-note">Melde dich mit Google an, um deine Google-Kalender hier zu sehen und Termine direkt dort einzutragen.</p><button class="pill wide" data-act="devconnect">Mit Google verbinden</button>`;return;}
-  let h=`<div class="side-title">${title} <button data-act="devrefresh" aria-label="Aktualisieren">↻ Aktualisieren</button></div>`;
-  if(d.needAuth)h+=`<p class="side-note">Die Google-Anmeldung ist abgelaufen.</p><button class="pill wide" data-act="devconnect" style="margin-bottom:8px">Erneut anmelden</button>`;
-  let acc=null;
-  for(const c of d.cals){
-    if(c.account!==acc){acc=c.account;h+=`<div class="acct">${esc(acc||(nat?"Auf dem Gerät":"Google"))}</div>`;}
-    h+=`<div class="cal-item ${d.show[c.id]!==false?"on":""}" data-act="toggledev" data-id="${esc(c.id)}" style="--c:${esc(c.color)}"><div class="cal-box"></div><span>${esc(c.name)}${c.writable?"":" 🔒"}</span></div>`;
-  }
-  if(!d.cals.length&&!d.error&&!d.needAuth)h+=`<p class="side-note">${d.loading?"Lädt…":nat?"Keine Kalender gefunden. Füge in den Android-Einstellungen unter „Konten“ z. B. dein Google-Konto hinzu.":"Keine Kalender gefunden."}</p>`;
-  if(d.error)h+=`<div class="dev-err">${esc(d.error)}</div>`;
-  if(state.events.size&&devWritable().length)h+=`<button class="opt-btn" data-act="devmigrate">⇄ Tagwerk-Termine ins Konto übertragen</button>`;
-  h+=`<button class="opt-btn" data-act="devdisconnect" style="color:var(--muted)">Verbindung trennen</button>`;
+  let h=renderDevSection();
+  const dav=renderDavSection();
+  if(h&&dav)h+=`<div style="height:14px"></div>`;
+  h+=dav;
+  if(state.events.size&&allWritable().length)h+=`<button class="opt-btn" data-act="devmigrate">⇄ Tagwerk-Termine ins Konto übertragen</button>`;
   el.innerHTML=h;
 }
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&state.dev.enabled&&devPlugin()&&!state.dev.needAuth)devLoadCals().then(devReload);});
+const devEnsureView=srcEnsureView;
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState!=="visible")return;
+  for(const S of srcList())if(S.st.enabled&&S.P()&&!S.st.needAuth)srcLoadCals(S).then(()=>srcReload(S));
+});
+
+/* CalDAV-Verbindungsdialog */
+function openDavForm(){
+  const c=DavCal.creds()||{};
+  openModal(`<form class="sheet" id="davform" autocomplete="on"><div class="sheet-head"><button type="button" class="link" data-close>Abbrechen</button><h3>CalDAV-Konto</h3><button class="link strong" type="submit" id="dv-go">Verbinden</button></div>
+    <p class="hint">Für Nextcloud, mailbox.org, Posteo, Radicale und andere CalDAV-Dienste.</p>
+    <div class="group">
+      <input id="dv-url" type="url" inputmode="url" placeholder="Server, z. B. https://cloud.example.de" required autocomplete="url">
+      <input id="dv-user" placeholder="Benutzername" required autocomplete="username" style="border-top:1px solid var(--line)">
+      <input id="dv-pass" type="password" placeholder="App-Passwort" required autocomplete="current-password" style="border-top:1px solid var(--line)">
+    </div>
+    <p class="hint"><b>Nextcloud:</b> Lege unter Einstellungen → Sicherheit → „Neues App-Passwort erstellen“ ein eigenes Passwort für Tagwerk an. Die Server-Adresse ist die deiner Nextcloud.${isNative()?"":`<br><b>Am PC/im Browser</b> muss der Server den Zugriff von <code>${esc(location.origin)}</code> erlauben. Bei Nextcloud: App „WebAppPassword“ installieren und diese Adresse unter „WebDAV/CalDAV Allowed Origins“ eintragen.`}</p>
+    <p class="hint">Die Zugangsdaten werden nur auf diesem Gerät gespeichert.</p>
+    <div class="dev-err" id="dv-err" style="display:none"></div>
+  </form>`);
+  $("#dv-url",modal).value=c.base||"";$("#dv-user",modal).value=c.user||"";$("#dv-pass",modal).value=c.pass||"";
+  setTimeout(()=>$(c.base?"#dv-pass":"#dv-url",modal).focus(),60);
+  $("#davform",modal).onsubmit=async ev=>{
+    ev.preventDefault();
+    const btn=$("#dv-go",modal),err=$("#dv-err",modal);
+    btn.disabled=true;btn.textContent="Prüfe…";err.style.display="none";
+    try{
+      await DavCal.connect($("#dv-url",modal).value.trim(),$("#dv-user",modal).value.trim(),$("#dv-pass",modal).value);
+      const S=SOURCES.dav;
+      S.st.enabled=true;S.st.needAuth=false;S.st.cals=[];srcSavePrefs(S);
+      closeModal();
+      await srcLoadCals(S);srcReload(S);
+      toast(`Verbunden mit ${DavCal.accountName()}`);
+    }catch(e){
+      err.textContent=errText(e);err.style.display="";
+      btn.disabled=false;btn.textContent="Verbinden";
+    }
+  };
+}
+
+/* ---------- CalDAV (RFC 4791) ---------- */
+const DavCal=(()=>{
+  const NS={d:"DAV:",c:"urn:ietf:params:xml:ns:caldav",a:"http://apple.com/ns/ical/"};
+  let cred=lsGet("tagwerk:davcred")||null;
+  const objs=new Map();
+  let _http=null;
+  function nativeHttp(){
+    if(_http!==null)return _http;
+    _http=false;
+    const C=window.Capacitor;
+    if(C&&isNative()){try{_http=C.registerPlugin?C.registerPlugin("DavHttp"):(C.Plugins&&C.Plugins.DavHttp)||false;}catch(e){_http=false;}}
+    return _http;
+  }
+  const b64=s=>btoa(unescape(encodeURIComponent(s)));
+  const authErr=()=>Object.assign(new Error("Benutzername oder Passwort falsch."),{needAuth:true});
+  async function http(method,url,o={},c=cred){
+    const headers=Object.assign({"Authorization":"Basic "+b64(c.user+":"+c.pass)},o.headers||{});
+    const N=nativeHttp();
+    if(N){
+      let r;
+      try{r=await N.request({url,method,headers,data:o.body||""});}
+      catch(e){throw new Error("Server nicht erreichbar: "+errText(e));}
+      return {status:r.status,text:r.data||"",url:r.url||url};
+    }
+    let r;
+    try{r=await fetch(url,{method,headers,body:o.body,credentials:"omit",cache:"no-store",redirect:"follow"});}
+    catch(e){throw new Error("Server nicht erreichbar – oder er blockiert den Zugriff aus dem Browser. Bei Nextcloud die App „WebAppPassword“ installieren und "+location.origin+" als erlaubte Herkunft (WebDAV/CalDAV) eintragen.");}
+    return {status:r.status,text:await r.text(),url:r.url||url};
+  }
+  const xml=t=>{const d=new DOMParser().parseFromString(t,"application/xml");if(d.getElementsByTagName("parsererror").length)throw new Error("Ungültige Antwort vom Server.");return d;};
+  const kids=(el,ns,n)=>el?[...el.getElementsByTagNameNS(ns,n)]:[];
+  const one=(el,ns,n)=>kids(el,ns,n)[0]||null;
+  const txt=(el,ns,n)=>{const x=one(el,ns,n);return x?x.textContent.trim():"";};
+  const abs=(href,base)=>new URL(href,base).href;
+  async function propfind(url,depth,props,c){
+    const body=`<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:" xmlns:c="${NS.c}" xmlns:a="${NS.a}"><d:prop>${props}</d:prop></d:propfind>`;
+    const r=await http("PROPFIND",url,{headers:{"Depth":String(depth),"Content-Type":"application/xml; charset=utf-8"},body},c);
+    if(r.status===401)throw authErr();if(r.status===403)throw Object.assign(new Error("Zugriff verweigert (HTTP 403)."),{status:403});
+    if(r.status!==207)throw Object.assign(new Error("HTTP "+r.status),{status:r.status});
+    return {doc:xml(r.text),url:r.url};
+  }
+  async function connect(base,user,pass){
+    if(!/^https?:\/\//i.test(base))base="https://"+base;
+    if(/^http:\/\//i.test(base)&&!/^http:\/\/(localhost|127\.)/i.test(base))throw new Error("Bitte eine sichere https-Adresse verwenden.");
+    const c={base:base.replace(/\/+$/,""),user,pass};
+    const u=new URL(c.base);
+    const cands=[];
+    if(u.pathname&&u.pathname!=="/")cands.push(c.base+"/");
+    cands.push(u.origin+"/remote.php/dav/",u.origin+"/.well-known/caldav",u.origin+"/",u.origin+"/dav/",u.origin+"/caldav/");
+    let principal=null,lastErr=null;
+    for(const url of cands){
+      try{
+        const {doc,url:fin}=await propfind(url,0,"<d:current-user-principal/>",c);
+        const h=one(one(doc,NS.d,"current-user-principal"),NS.d,"href");
+        if(h){principal=abs(h.textContent.trim(),fin);break;}
+      }catch(e){if(e.needAuth)throw e;lastErr=e;}
+    }
+    if(!principal)throw new Error("Unter dieser Adresse wurde kein CalDAV-Dienst gefunden."+(lastErr&&/blockiert/.test(lastErr.message)?" "+lastErr.message:""));
+    const {doc,url:fin}=await propfind(principal,0,"<c:calendar-home-set/>",c);
+    const hh=one(one(doc,NS.c,"calendar-home-set"),NS.d,"href");
+    c.home=hh?abs(hh.textContent.trim(),fin):principal;
+    if(!c.home.endsWith("/"))c.home+="/";
+    c.account=user+"@"+u.host;
+    cred=c;lsSet("tagwerk:davcred",c);
+  }
+  async function listCalendars(){
+    const {doc,url}=await propfind(cred.home,1,"<d:resourcetype/><d:displayname/><a:calendar-color/><c:supported-calendar-component-set/><d:current-user-privilege-set/>");
+    const out=[];
+    for(const r of kids(doc,NS.d,"response")){
+      const href=txt(r,NS.d,"href");
+      const ok=kids(r,NS.d,"propstat").find(p=>/ 200 /.test(txt(p,NS.d,"status")+" "));
+      if(!ok)continue;
+      const rt=one(ok,NS.d,"resourcetype");
+      if(!one(rt,NS.c,"calendar"))continue;
+      const comps=kids(one(ok,NS.c,"supported-calendar-component-set"),NS.c,"comp").map(x=>x.getAttribute("name"));
+      if(comps.length&&!comps.includes("VEVENT"))continue;
+      const privSet=one(ok,NS.d,"current-user-privilege-set");
+      const privs=privSet?kids(privSet,NS.d,"privilege").map(p=>p.firstElementChild&&p.firstElementChild.localName):null;
+      const writable=!privs||privs.some(p=>["write","write-content","all","bind"].includes(p));
+      const id=abs(href,url);
+      out.push({id,title:txt(ok,NS.d,"displayname")||decodeURIComponent(id.replace(/\/$/,"").split("/").pop()),accountName:cred.account,color:txt(ok,NS.a,"calendar-color")||null,allowsContentModifications:writable,visible:true});
+    }
+    return {result:out};
+  }
+  /* --- iCalendar --- */
+  const unfold=t=>t.replace(/\r?\n[ \t]/g,"");
+  function parseLine(l){
+    let i=0,q=false;
+    for(;i<l.length;i++){const ch=l[i];if(ch==='"')q=!q;else if(ch===":"&&!q)break;}
+    const head=l.slice(0,i),value=l.slice(i+1);
+    const parts=head.split(";");const name=parts.shift().toUpperCase();
+    const params={};for(const p of parts){const k=p.indexOf("=");if(k>0)params[p.slice(0,k).toUpperCase()]=p.slice(k+1).replace(/^"|"$/g,"");}
+    return {name,params,value};
+  }
+  const unesc=v=>v.replace(/\\n/gi,"\n").replace(/\\([,;\\])/g,"$1");
+  const escv=v=>String(v||"").replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");
+  function parseDate(p){
+    const v=p.value.trim();
+    let m=v.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if(m||p.params.VALUE==="DATE"){m=m||v.match(/^(\d{4})(\d{2})(\d{2})/);return {allDay:true,ms:Date.UTC(+m[1],+m[2]-1,+m[3])};}
+    m=v.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/);
+    if(!m)return null;
+    const [_,y,mo,d,h,mi,s,z]=m;
+    return {allDay:false,ms:z?Date.UTC(+y,+mo-1,+d,+h,+mi,+s):new Date(+y,+mo-1,+d,+h,+mi,+s).getTime()};
+  }
+  function durMs(v){const m=String(v).match(/^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);if(!m)return 0;const n=x=>+(x||0);return (m[1]==="-"?-1:1)*(n(m[2])*7*DAY+n(m[3])*DAY+n(m[4])*3600e3+n(m[5])*60e3+n(m[6])*1e3);}
+  function vevents(ics){
+    const lines=unfold(ics).split(/\r?\n/);const out=[];let cur=null,depth=0;
+    for(const l of lines){
+      if(/^BEGIN:VEVENT$/i.test(l)){cur={props:[]};depth=0;continue;}
+      if(!cur)continue;
+      if(/^BEGIN:/i.test(l)){depth++;continue;}
+      if(/^END:VEVENT$/i.test(l)&&depth===0){out.push(cur);cur=null;continue;}
+      if(/^END:/i.test(l)){depth--;continue;}
+      if(depth===0&&l.trim())cur.props.push(parseLine(l));
+    }
+    return out.map(v=>{const g=n=>v.props.find(p=>p.name===n);return {g,all:n=>v.props.filter(p=>p.name===n)};});
+  }
+  const stamp=ms=>new Date(ms).toISOString().replace(/[-:]/g,"").replace(/\.\d{3}/,"");
+  const dval=d=>d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
+  const lval=d=>dval(d)+"T"+pad(d.getHours())+pad(d.getMinutes())+"00";
+  function tzInfo(){
+    const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
+    const y=new Date().getFullYear(),jan=-new Date(y,0,1).getTimezoneOffset(),jul=-new Date(y,6,1).getTimezoneOffset();
+    if(!/^Europe\//.test(tz)||jan===jul)return null;
+    const off=m=>(m<0?"-":"+")+pad(Math.floor(Math.abs(m)/60))+pad(Math.abs(m)%60);
+    const vt=["BEGIN:VTIMEZONE","TZID:"+tz,
+      "BEGIN:DAYLIGHT","TZOFFSETFROM:"+off(jan),"TZOFFSETTO:"+off(jul),"DTSTART:19700329T"+pad(1+jan/60)+"0000","RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU","END:DAYLIGHT",
+      "BEGIN:STANDARD","TZOFFSETFROM:"+off(jul),"TZOFFSETTO:"+off(jan),"DTSTART:19701025T"+pad(1+jul/60)+"0000","RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU","END:STANDARD",
+      "END:VTIMEZONE"];
+    return {tz,vt};
+  }
+  function propLines(o){
+    const L=[],tzi=tzInfo();
+    if(o.title!=null)L.push("SUMMARY:"+escv(o.title));
+    if(o.location!=null)L.push("LOCATION:"+escv(o.location));
+    if(o.description!=null)L.push("DESCRIPTION:"+escv(o.description));
+    if(o.startDate!=null){
+      if(o.isAllDay){L.push("DTSTART;VALUE=DATE:"+dval(new Date(o.startDate)));L.push("DTEND;VALUE=DATE:"+dval(addDays(new Date(o.endDate!=null?o.endDate:o.startDate),1)));}
+      else if(tzi){L.push("DTSTART;TZID="+tzi.tz+":"+lval(new Date(o.startDate)));L.push("DTEND;TZID="+tzi.tz+":"+lval(new Date(o.endDate)));}
+      else{L.push("DTSTART:"+stamp(o.startDate));L.push("DTEND:"+stamp(o.endDate));}
+    }
+    if(o.recurrence){let r="RRULE:FREQ="+String(o.recurrence.frequency).toUpperCase();if(o.recurrence.end)r+=";UNTIL="+stamp(o.recurrence.end);L.push(r);}
+    return {L,tzi:o.startDate!=null&&!o.isAllDay?tzi:null};
+  }
+  function fold(l){
+    const out=[];let cur="",bytes=0;
+    for(const ch of l){const b=new TextEncoder().encode(ch).length;if(bytes+b>74){out.push(cur);cur=" ";bytes=1;}cur+=ch;bytes+=b;}
+    out.push(cur);return out.join("\r\n");
+  }
+  const join=lines=>lines.map(fold).join("\r\n")+"\r\n";
+  function buildIcs(uidv,o){
+    const {L,tzi}=propLines(o);
+    return join(["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Tagwerk//Kalender//DE","CALSCALE:GREGORIAN",...(tzi?tzi.vt:[]),"BEGIN:VEVENT","UID:"+uidv,"DTSTAMP:"+stamp(Date.now()),"CREATED:"+stamp(Date.now()),...L,"END:VEVENT","END:VCALENDAR"]);
+  }
+  function patchIcs(ics,o,opts={}){
+    let lines=unfold(ics).split(/\r?\n/).filter(l=>l!=="");
+    const {L,tzi}=propLines(o);
+    const names=new Set();
+    if(o.title!=null)names.add("SUMMARY");if(o.location!=null)names.add("LOCATION");if(o.description!=null)names.add("DESCRIPTION");
+    if(o.startDate!=null){names.add("DTSTART");names.add("DTEND");names.add("DURATION");}
+    if(o.recurrence!==undefined&&o.startDate!=null)names.add("RRULE");
+    names.add("DTSTAMP");names.add("LAST-MODIFIED");
+    const out=[];let inEv=false,depth=0,block=[],isMaster=true,done=false;
+    for(const l of lines){
+      if(/^BEGIN:VEVENT$/i.test(l)&&!inEv){inEv=true;depth=0;block=[l];isMaster=true;continue;}
+      if(!inEv){out.push(l);continue;}
+      if(/^BEGIN:/i.test(l))depth++;
+      if(/^END:VEVENT$/i.test(l)&&depth===0){
+        inEv=false;
+        if(isMaster&&!done){
+          done=true;
+          let dd=0;
+          const keep=block.filter((x,i)=>{if(i===0)return true;if(/^BEGIN:/i.test(x)){dd++;return true;}if(/^END:/i.test(x)){dd--;return true;}if(dd>0)return true;return !names.has(parseLine(x).name);});
+          const extra=[...L,"DTSTAMP:"+stamp(Date.now()),"LAST-MODIFIED:"+stamp(Date.now())];
+          if(opts.exdate)extra.push(opts.exdate);
+          out.push(...keep,...extra,l);
+        }else if(opts.dropRecurMs!=null&&!isMaster&&block.some(x=>{if(!/^RECURRENCE-ID/i.test(x))return false;const d=parseDate(parseLine(x));return d&&d.ms===opts.dropRecurMs;})){/* entfernte Ausnahme */}
+        else out.push(...block,l);
+        continue;
+      }
+      if(/^END:/i.test(l))depth--;
+      if(depth===0&&/^RECURRENCE-ID/i.test(l))isMaster=false;
+      block.push(l);
+    }
+    if(tzi&&!out.some(l=>l.toUpperCase()==="TZID:"+tzi.tz.toUpperCase())){
+      const i=out.findIndex(l=>/^BEGIN:VEVENT$/i.test(l));
+      out.splice(i<0?out.length-1:i,0,...tzi.vt);
+    }
+    return join(out);
+  }
+  /* einfache Wiederholungs-Auflösung, falls der Server „expand“ nicht kann */
+  function expandLocal(v,start,end,from,to){
+    const rr=v.g("RRULE");if(!rr)return [{s:start,e:end,rid:""}];
+    const p={};rr.value.split(";").forEach(x=>{const [k,val]=x.split("=");p[k.toUpperCase()]=val;});
+    const step=Math.max(1,+(p.INTERVAL||1)),count=p.COUNT?+p.COUNT:Infinity;
+    const until=p.UNTIL?parseDate({value:p.UNTIL,params:{}}).ms:Infinity;
+    const ex=new Set(v.all("EXDATE").flatMap(x=>x.value.split(",").map(y=>{const d=parseDate({value:y,params:x.params});return d&&d.ms;})));
+    const dur=end-start,out=[];const s0=new Date(start);
+    for(let i=0,n=0;i<5000&&n<count;i++){
+      let d;
+      if(p.FREQ==="DAILY")d=addDays(s0,i*step);
+      else if(p.FREQ==="WEEKLY")d=addDays(s0,7*i*step);
+      else if(p.FREQ==="MONTHLY"){d=new Date(s0);d.setMonth(s0.getMonth()+i*step);if(d.getDate()!==s0.getDate())continue;}
+      else if(p.FREQ==="YEARLY"){d=new Date(s0);d.setFullYear(s0.getFullYear()+i*step);if(d.getMonth()!==s0.getMonth())continue;}
+      else break;
+      const ms=d.getTime();if(ms>until||ms>=to)break;n++;
+      if(ex.has(ms))continue;
+      if(ms+dur>from)out.push({s:ms,e:ms+dur,rid:stamp(ms)});
+    }
+    return out;
+  }
+  async function listEventsInRange(o){
+    const s=stamp(o.from),e=stamp(o.to);
+    const body=`<?xml version="1.0" encoding="utf-8"?><c:calendar-query xmlns:d="DAV:" xmlns:c="${NS.c}"><d:prop><d:getetag/><c:calendar-data><c:expand start="${s}" end="${e}"/></c:calendar-data></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${s}" end="${e}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`;
+    const lists=await Promise.all((o.calendarIds||[]).map(async cal=>{
+      const r=await http("REPORT",cal,{headers:{"Depth":"1","Content-Type":"application/xml; charset=utf-8"},body});
+      if(r.status===401)throw authErr();if(r.status===403)throw Object.assign(new Error("Zugriff verweigert (HTTP 403)."),{status:403});
+      if(r.status!==207)throw new Error("Server antwortet mit HTTP "+r.status);
+      const doc=xml(r.text),res=[];
+      for(const resp of kids(doc,NS.d,"response")){
+        const href=abs(txt(resp,NS.d,"href"),cal);
+        const data=txt(resp,NS.c,"calendar-data");if(!data)continue;
+        const etag=txt(resp,NS.d,"getetag");
+        const evs=vevents(data);
+        const hasRule=evs.some(v=>v.g("RRULE"));
+        const series=evs.length>1||hasRule||evs.some(v=>v.g("RECURRENCE-ID"));
+        objs.set(href,{href,etag,cal});
+        for(const v of evs){
+          const ds=v.g("DTSTART");if(!ds)continue;
+          const st=parseDate(ds);if(!st)continue;
+          let en=v.g("DTEND")?parseDate(v.g("DTEND")):null;
+          let endMs=en?en.ms:(v.g("DURATION")?st.ms+durMs(v.g("DURATION").value):(st.allDay?st.ms+DAY:st.ms));
+          let startMs=st.ms;
+          if(st.allDay){/* Datumswerte sind UTC-Mitternacht */}
+          const rid=v.g("RECURRENCE-ID");
+          const occ=(!rid&&v.g("RRULE"))?expandLocal(v,startMs,endMs,o.from,o.to):[{s:startMs,e:endMs,rid:rid?rid.value:""}];
+          for(const x of occ){
+            if(!st.allDay&&(x.e<=o.from||x.s>=o.to))continue;
+            const id=href+"#"+x.rid;
+            objs.set(id,{href,etag,cal,rid:x.rid});
+            const g=n=>{const p=v.g(n);return p?unesc(p.value):"";};
+            res.push({id,calendarId:cal,title:g("SUMMARY"),location:g("LOCATION"),description:g("DESCRIPTION"),startDate:x.s,endDate:x.e,isAllDay:st.allDay,isPartOfSeries:series,masterId:href});
+          }
+        }
+      }
+      return res;
+    }));
+    return {result:lists.flat()};
+  }
+  const hrefOf=id=>String(id).split("#")[0];
+  async function getIcs(href){
+    const r=await http("GET",href);
+    if(r.status===401)throw authErr();if(r.status===403)throw Object.assign(new Error("Zugriff verweigert (HTTP 403)."),{status:403});
+    if(r.status!==200)throw new Error("Termin konnte nicht gelesen werden (HTTP "+r.status+").");
+    return r.text;
+  }
+  async function put(href,ics,etag,isNew){
+    const h={"Content-Type":"text/calendar; charset=utf-8"};
+    if(isNew)h["If-None-Match"]="*";else if(etag)h["If-Match"]=etag;
+    const r=await http("PUT",href,{headers:h,body:ics});
+    if(r.status===401)throw authErr();if(r.status===403)throw Object.assign(new Error("Zugriff verweigert (HTTP 403)."),{status:403});
+    if(r.status===412)throw new Error("Der Termin wurde inzwischen woanders geändert – bitte aktualisieren und erneut versuchen.");
+    if(r.status<200||r.status>=300)throw new Error("Speichern fehlgeschlagen (HTTP "+r.status+").");
+  }
+  async function createEvent(o){
+    const u=(crypto.randomUUID?crypto.randomUUID():uid()+Math.random().toString(36).slice(2))+"@tagwerk";
+    const cal=o.calendarId.endsWith("/")?o.calendarId:o.calendarId+"/";
+    const href=cal+encodeURIComponent(u.replace(/@.*/,""))+".ics";
+    await put(href,buildIcs(u,o),null,true);
+    return {id:href+"#"};
+  }
+  async function modifyEvent(o){
+    const href=hrefOf(o.id),meta=objs.get(href)||{};
+    const ics=await getIcs(href);
+    await put(href,patchIcs(ics,o),meta.etag);
+  }
+  async function deleteEvent(o){
+    const meta=objs.get(String(o.id))||{},href=hrefOf(o.id);
+    const base=objs.get(href)||{};
+    if(o.span===0&&meta.rid){
+      const ics=await getIcs(href);
+      const isDate=/^\d{8}$/.test(meta.rid);
+      const pd=parseDate({value:meta.rid,params:{}});
+      const exv=isDate?"EXDATE;VALUE=DATE:"+meta.rid:"EXDATE:"+(/Z$/.test(meta.rid)?meta.rid:stamp(pd.ms));
+      await put(href,patchIcs(ics,{},{exdate:exv,dropRecurMs:pd&&pd.ms}),base.etag);
+      return;
+    }
+    const h={};if(base.etag)h["If-Match"]=base.etag;
+    const r=await http("DELETE",href,{headers:h});
+    if(r.status===401)throw authErr();if(r.status===403)throw Object.assign(new Error("Zugriff verweigert (HTTP 403)."),{status:403});
+    if(r.status===412)throw new Error("Der Termin wurde inzwischen woanders geändert – bitte aktualisieren.");
+    if(r.status>=300&&r.status!==404&&r.status!==410)throw new Error("Löschen fehlgeschlagen (HTTP "+r.status+").");
+  }
+  return {
+    connect,listCalendars,listEventsInRange,createEvent,modifyEvent,deleteEvent,
+    configured:()=>!!(cred&&cred.home),creds:()=>cred,accountName:()=>cred&&cred.account||"",
+    forget:()=>{cred=null;objs.clear();lsSet("tagwerk:davcred",null);},
+    _test:{patchIcs,buildIcs,vevents,parseDate}
+  };
+})();
 
 /* ---------- Google Kalender (Web/PC) – gleiche Schnittstelle wie das Android-Plugin ---------- */
 const GoogleCal=(()=>{
@@ -1116,7 +1517,7 @@ function parseQuick(text){
   const take=re=>{const m=t.match(re);if(m)t=t.replace(m[0]," ");return m;};
   const T=today0();
   let date=null,sh=null,sm=0,eh=null,em=0,repeat="none",loc="",cal=null,m;
-  if((m=take(/\s#([^\s#]+)/))){const q=m[1].toLowerCase();cal=state.cals.concat(devWritable()).find(c=>c.name.toLowerCase().startsWith(q))||null;}
+  if((m=take(/\s#([^\s#]+)/))){const q=m[1].toLowerCase();cal=allWritable().concat(state.cals).find(c=>c.name.toLowerCase().startsWith(q))||null;}
   if((m=take(/\s@\s*([^@]+?)\s*$/)))loc=m[1].trim();
   if(!loc){
     const STREET="(?:straße|strasse|str\\.|weg|platz|allee|gasse|ring|damm|ufer|chaussee|steig|pfad|markt|berg|hof|garten|feld|kamp|wall|graben|promenade|brücke)";
@@ -1173,7 +1574,7 @@ function commitQuick(){
   if(state.view==="month"){state.cursor=new Date(d.getFullYear(),d.getMonth(),d.getDate());}
   else state.cursor=startOfDay(d);
   syncMini();
-  if(String(ev.cal).startsWith("dev:")){deviceSave(null,ev);return;}
+  if(srcOfCal(ev.cal)){deviceSave(null,ev);return;}
   saveEvent(ev);
   toast(`Eingetragen: ${ev.title}`,{label:"Bearbeiten",fn:()=>openEditor(ev.id)});
 }
@@ -1190,11 +1591,11 @@ document.addEventListener("click",e=>{
   const a=el.dataset.act,d=el.dataset.date;
   switch(a){
     case "nav":e.stopPropagation();break;
-    case "devconnect":devConnect();break;
-    case "devrefresh":devLoadCals().then(devReload);toast("Aktualisiere "+provLabel()+"…");break;
-    case "devdisconnect":devDisconnect();break;
+    case "devconnect":srcConnect(SOURCES[el.dataset.src||"dev"]);break;
+    case "devrefresh":{const S=SOURCES[el.dataset.src||"dev"];srcLoadCals(S).then(()=>srcReload(S));toast("Aktualisiere "+S.label()+"…");break;}
+    case "devdisconnect":srcDisconnect(SOURCES[el.dataset.src||"dev"]);break;
     case "devmigrate":document.body.classList.remove("drawer");devMigrate();break;
-    case "toggledev":{const id=el.dataset.id;state.dev.show[id]=state.dev.show[id]===false;devSavePrefs();devReload();break;}
+    case "toggledev":{const S=SOURCES[el.dataset.src||"dev"],id=el.dataset.id;S.st.show[id]=S.st.show[id]===false;srcSavePrefs(S);srcReload(S);break;}
     case "backup":document.body.classList.remove("drawer");openBackup();break;
     case "restore":document.body.classList.remove("drawer");openRestore();break;
     case "prev":nav(-1);break;

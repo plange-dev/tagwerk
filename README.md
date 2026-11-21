@@ -13,6 +13,9 @@ Eigenständige Kalender-App mit eigenem Design.
   übernimmt Android. Vorhandene Tagwerk-Termine lassen sich in ein Konto übertragen.
 - **Google-Konto (PC/Web):** Anmeldung mit Google, Google-Kalender anzeigen und Termine dort
   eintragen, bearbeiten, löschen. Benötigt eine OAuth-Client-ID (siehe unten).
+- **CalDAV-Konto (Android & PC):** Nextcloud, mailbox.org, Posteo, Radicale u. a. – Kalender anzeigen,
+  Termine anlegen, ändern, löschen (auch einzelne Termine einer Serie). Android spricht den Server direkt an;
+  am PC muss der Server Zugriffe von `https://plange-dev.github.io` erlauben (Nextcloud: App *WebAppPassword*).
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
 ## Installieren
