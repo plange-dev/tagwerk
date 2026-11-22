@@ -731,7 +731,7 @@ function openEditor(id,opts={}){
     </div>
     <div class="group"><input id="f-loc" placeholder="Ort oder Adresse – z. B. Hauptstraße 5, 10115 Berlin" maxlength="200" autocomplete="street-address"><div class="navrow" id="f-nav"></div><textarea id="f-notes" placeholder="Notizen" rows="3" maxlength="5000"></textarea></div>
     ${lockSeries?`<p class="hint">Serie aus ${isNative()?"deinem Handy-Kalender":"Google Kalender"}: Titel, Ort und Notizen gelten für die ganze Serie. Datum und Wiederholung änderst du ${isNative()?"in der Kalender-App deines Kontos":"direkt in Google Kalender"}.</p>`:old&&rep!=="none"?`<p class="hint">Änderungen gelten für die ganze Serie.</p>`:""}
-    ${old&&old.device?`<p class="hint">${old.src.mark()}Wird mit „${esc(calOf(old.cal).name)}“ synchronisiert.${old.src.key==="dev"&&isNative()?" Die Erinnerung zeigt die Kalender-App des Kontos an (z. B. Google Kalender).":""}</p>`:""}
+    ${old&&old.device?`<p class="hint">${old.src.mark()}Wird mit „${esc(calOf(old.cal).name)}“ synchronisiert.${old.src.key==="dev"&&isNative()&&!state.notif.devToo?" Die Erinnerung zeigt die Kalender-App des Kontos an (z. B. Google Kalender).":""}</p>`:""}
     ${old?`<button type="button" class="danger" id="f-del">Termin löschen</button>`:""}
   </form>`);
   const f=id=>$("#"+id,modal);
@@ -1577,9 +1577,10 @@ const toList=v=>Array.isArray(v)?v.filter(x=>x!=null&&x!==""&&!isNaN(+x)).map(Nu
 const normRem=l=>[...new Set(toList(l))].sort((a,b)=>b-a);
 const remSummary=l=>!l||!l.length?"Keine":l.length===1?remindLabel(l[0]):l.length+" Erinnerungen";
 const NOTIF_KEY="tagwerk:notif";
-state.notif=Object.assign({remind:true,defTimed:15,defAllDay:-540,daily:true,dailyAt:"07:00",asked:false},lsGet(NOTIF_KEY)||{},{perm:null,exact:false});
+state.notif=Object.assign({remind:true,defTimed:15,defAllDay:-540,daily:true,dailyAt:"07:00",asked:false,devToo:true},lsGet(NOTIF_KEY)||{},{perm:null,exact:false,planned:null,next:null,lastError:null});
 state.notif.defTimed=normRem(state.notif.defTimed);state.notif.defAllDay=normRem(state.notif.defAllDay);
-function notifSave(){const n=state.notif;lsSet(NOTIF_KEY,{remind:n.remind,defTimed:n.defTimed,defAllDay:n.defAllDay,daily:n.daily,dailyAt:n.dailyAt,asked:n.asked});}
+function notifSave(){const n=state.notif;lsSet(NOTIF_KEY,{remind:n.remind,defTimed:n.defTimed,defAllDay:n.defAllDay,daily:n.daily,dailyAt:n.dailyAt,asked:n.asked,devToo:n.devToo});}
+const TEST_ID=999999;
 const defRemind=allDay=>normRem(allDay?state.notif.defAllDay:state.notif.defTimed);
 /* Tagwerk-eigene Termine ohne eigene Angabe nutzen die Standard-Erinnerung */
 const effRemind=ev=>ev.remind===undefined?defRemind(!!ev.allDay):normRem(ev.remind);
@@ -1630,7 +1631,7 @@ async function doSchedule(){
   const list=[];
   if(N.remind)for(const o of occ){
     const S=srcOfInst(o.ev.id);
-    if(S&&S.key==="dev")continue; /* Handy-Konten: Erinnerung kommt von der Kalender-App des Kontos */
+    if(S&&S.key==="dev"&&!N.devToo)continue; /* sonst übernimmt die Kalender-App des Kontos */
     const rs=S?normRem(o.ev.remind):effRemind(o.ev);
     const when=o.allDay?`${relDay(o.start)} · ganztägig`:`${relDay(o.start)} um ${hm(o.start)} Uhr`;
     const loc=o.ev.location?` · ${o.ev.location}`:"";
@@ -1659,12 +1660,23 @@ async function doSchedule(){
   _planBusy=true;
   try{
     const pend=await L.getPending();
-    const ids=(pend&&pend.notifications||[]).map(n=>({id:n.id}));
+    const ids=(pend&&pend.notifications||[]).filter(n=>+n.id!==TEST_ID).map(n=>({id:n.id}));
     if(ids.length)await L.cancel({notifications:ids});
     if(list.length)await L.schedule({notifications:list});
     _planSig=sig;
-  }catch(e){console.warn("Benachrichtigungen:",e);}
+    N.planned=list.length;N.next=list[0]?{at:+list[0].schedule.at,title:list[0].title}:null;N.lastError=null;
+  }catch(e){N.lastError=errText(e);console.warn("Benachrichtigungen:",e);}
   _planBusy=false;
+  _notifHtml="";renderNotif();
+}
+async function notifTest(){
+  const L=LN();if(!L){toast("Benachrichtigungen gibt es nur in der Android-App.");return;}
+  if(state.notif.perm!=="granted"){await notifCheckPerm("force");render();}
+  if(state.notif.perm!=="granted"){toast("Benachrichtigungen sind blockiert – bitte in den Android-Einstellungen erlauben.");return;}
+  try{
+    await L.schedule({notifications:[{id:TEST_ID,title:"Tagwerk-Test",body:"So sehen deine Termin-Erinnerungen aus.",schedule:{at:new Date(Date.now()+5000),allowWhileIdle:true},channelId:"erinnerungen",smallIcon:"ic_stat_tagwerk",iconColor:"#D4552C",isExactNotification:!!state.notif.exact,autoCancel:true}]});
+    toast("Test-Benachrichtigung kommt in 5 Sekunden – du kannst die App dafür schließen.");
+  }catch(e){state.notif.lastError=errText(e);_notifHtml="";renderNotif();toast("Test fehlgeschlagen: "+errText(e));}
 }
 let _notifHtml="";
 function renderNotif(){
@@ -1681,12 +1693,21 @@ function renderNotif(){
   h+=`<div class="acct">Standard für ganztägige Termine</div>`+chipsFor("ad",REMIND_AD,N.defAllDay);
   h+=`<label class="opt"><span>Tagesübersicht am Morgen</span><input type="checkbox" class="switch" id="n-daily" ${N.daily?"checked":""}></label>`;
   h+=`<div class="opt" style="${N.daily?"":"opacity:.5"}"><span>Uhrzeit</span><input type="time" id="n-at" value="${esc(N.dailyAt)}" ${N.daily?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 8px"></div>`;
-  h+=`<p class="side-note" style="margin-top:6px">Termine aus Handy-Konten erinnert die Kalender-App des Kontos (z. B. Google Kalender).</p><div style="height:10px"></div>`;
+  if(SOURCES.dev.st.enabled)h+=`<label class="opt"><span>Auch Termine aus Handy-Konten</span><input type="checkbox" class="switch" id="n-dev" ${N.devToo?"checked":""}></label><p class="side-note">${N.devToo?"Falls Erinnerungen doppelt kommen, schalte sie hier oder in der Kalender-App des Kontos (z. B. Google Kalender) aus.":"Diese Termine erinnert dann die Kalender-App des Kontos (z. B. Google Kalender)."}</p>`;
+  const st=[];
+  st.push("Erlaubt: "+(N.perm==="granted"?"ja":N.perm==="denied"?"nein":"–"));
+  st.push("Pünktlich: "+(N.exact?"ja":"nein"));
+  if(N.planned!=null)st.push("Geplant: "+N.planned);
+  let nx="";
+  if(N.next){const d=new Date(N.next.at);nx=`Nächste: ${relDay(d)} ${hm(d)} – ${esc(N.next.title)}`;}
+  h+=`<p class="side-note" style="margin-top:4px">${st.join(" · ")}${nx?"<br>"+nx:""}${N.lastError?`<br><span style="color:#D9443F">Fehler: ${esc(N.lastError)}</span>`:""}</p>`;
+  h+=`<button class="opt-btn" data-act="notiftest">🔔 Test-Benachrichtigung senden</button><div style="height:10px"></div>`;
   if(h!==_notifHtml){el.innerHTML=h;_notifHtml=h;}
 }
 document.addEventListener("change",e=>{
   const id=e.target&&e.target.id,N=state.notif;
-  if(!["n-rem","n-daily","n-at"].includes(id))return;
+  if(!["n-rem","n-daily","n-at","n-dev"].includes(id))return;
+  if(id==="n-dev")N.devToo=e.target.checked;
   if(id==="n-rem")N.remind=e.target.checked;
   if(id==="n-daily")N.daily=e.target.checked;
   if(id==="n-at"&&e.target.value)N.dailyAt=e.target.value;
@@ -1842,6 +1863,7 @@ document.addEventListener("click",e=>{
     case "nav":e.stopPropagation();break;
     case "version":document.body.classList.remove("drawer");openVersion();break;
     case "notifask":notifCheckPerm("force").then(render);break;
+    case "notiftest":notifTest();break;
     case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));notifSave();_planSig="";render();break;}
     case "devconnect":srcConnect(SOURCES[el.dataset.src||"dev"]);break;
     case "devrefresh":{const S=SOURCES[el.dataset.src||"dev"];srcLoadCals(S).then(()=>srcReload(S));toast("Aktualisiere "+S.label()+"…");break;}
