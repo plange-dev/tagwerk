@@ -23,8 +23,12 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
+      - name: Versionsangabe in die Web-App schreiben
+        run: |
+          echo "{\"version\":\"web-${{ github.run_number }}\",\"channel\":\"${{ github.ref_name }}\",\"commit\":\"${GITHUB_SHA::7}\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"platform\":\"web\"}" > www/version.json
+          cat www/version.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: www

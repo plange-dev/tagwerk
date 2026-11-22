@@ -50,7 +50,13 @@ aside{background:var(--panel);border-right:1px solid var(--line);padding:22px 20
 .cal-item:hover .edit{opacity:1}
 @media (hover:none){.cal-item .edit{opacity:1}}
 .opt{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px}
-.status{margin-top:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.sidefoot{margin-top:auto;display:flex;flex-direction:column;gap:6px}
+.verbtn{border:0;background:none;padding:2px 0;text-align:left;font-size:11.5px;color:var(--muted);cursor:pointer;font-variant-numeric:tabular-nums}
+.verbtn:hover{color:var(--ink)}
+.verbadge{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;margin-left:4px;vertical-align:1px}
+.verbadge.nightly{background:#F7E3B5;color:#7A5200}
+.verbadge.release{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
 .status i{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .status.ok i{background:var(--ok)} .status.warn i{background:var(--warn)}
 /* mini month */
@@ -287,7 +293,10 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
       <button class="opt-btn" data-act="backup">⤓ Backup erstellen</button>
       <button class="opt-btn" data-act="restore">⤒ Backup einspielen</button>
     </div>
-    <div class="status" id="status"><i></i><span>Lädt…</span></div>
+    <div class="sidefoot">
+      <div class="status" id="status"><i></i><span>Lädt…</span></div>
+      <button class="verbtn" id="verbtn" data-act="version">Version wird ermittelt…</button>
+    </div>
   </aside>
   <div class="scrim" data-act="closedrawer"></div>
   <main>
@@ -1687,6 +1696,42 @@ document.addEventListener("change",e=>{
 });
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&isNative())notifCheckPerm(false).then(()=>{_wgSig="";render();});});
 
+/* ---------- Versionsanzeige ---------- */
+state.version=null;
+const verChannel=v=>!v?"":v.channel==="main"?"Release":v.channel==="nightly"?"Nightly":v.channel||"";
+function verLabel(v){
+  if(!v)return FRAMED?"Vorschau-Version":"Entwicklungsversion";
+  return v.platform==="web"?`Web-Version · ${v.commit}`:`Version ${v.version}`;
+}
+function renderVersion(){
+  const b=$("#verbtn");if(!b)return;
+  const v=state.version,ch=verChannel(v);
+  b.innerHTML=esc(verLabel(v))+(ch?`<span class="verbadge ${v.channel==="main"?"release":"nightly"}">${esc(ch)}</span>`:"");
+}
+async function loadVersion(){
+  try{
+    const r=await fetch("version.json",{cache:"no-store"});
+    if(r.ok){const j=await r.json();if(j&&j.version)state.version=j;}
+  }catch(e){}
+  renderVersion();
+}
+function openVersion(){
+  const v=state.version;
+  const d=v&&v.date?new Date(v.date):null;
+  const when=d&&!isNaN(d)?`${d.getDate()}. ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${hm(d)} Uhr`:"–";
+  const row=(k,val)=>`<div class="row"><span>${k}</span><span style="color:var(--muted);text-align:right">${val}</span></div>`;
+  openModal(`<div class="sheet"><div class="sheet-head"><span style="width:60px"></span><h3>Über Tagwerk</h3><button class="link strong" data-close>Fertig</button></div>
+    <div class="group">
+      ${row("App",v?(v.platform==="web"?"Web-/PC-Version":"Android-App"):(isNative()?"Android-App":"Web-Version"))}
+      ${row("Version",esc(v?(v.platform==="web"?"Web · Build "+v.version.replace(/^web-/,""):v.version):"nicht angegeben"))}
+      ${row("Kanal",v?esc(verChannel(v))+(v.channel==="nightly"?" (Testversion)":""):"–")}
+      ${row("Erstellt",esc(when))}
+      ${row("Code-Stand",v?`<code>${esc(v.commit)}</code>`:"–")}
+    </div>
+    <p class="hint">${v&&v.channel==="nightly"?"Du nutzt eine Testversion aus dem Branch „nightly“. Die stabile Version findest du unter Releases.":"Neue Versionen findest du unter Releases."}<br><a href="https://github.com/plange-dev/tagwerk/releases" target="_blank" rel="noopener" style="color:var(--accent);font-weight:700">github.com/plange-dev/tagwerk/releases</a></p>
+  </div>`);
+}
+
 /* ---------- Backup ---------- */
 function openBackup(){
   const data=JSON.stringify({app:"tagwerk",v:1,exported:new Date().toISOString(),cals:state.cals,holidays:state.holidays,events:[...state.events.values()]});
@@ -1795,6 +1840,7 @@ document.addEventListener("click",e=>{
   const a=el.dataset.act,d=el.dataset.date;
   switch(a){
     case "nav":e.stopPropagation();break;
+    case "version":document.body.classList.remove("drawer");openVersion();break;
     case "notifask":notifCheckPerm("force").then(render);break;
     case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));notifSave();_planSig="";render();break;}
     case "devconnect":srcConnect(SOURCES[el.dataset.src||"dev"]);break;
@@ -1839,6 +1885,7 @@ setInterval(()=>{if(modal.hidden&&(state.view==="week"||state.view==="day"))rend
 
 render();
 initStore();
+loadVersion();
 if(isNative())notifInit();
 if("serviceWorker" in navigator&&!isNative()&&/^https?:$/.test(location.protocol)){
   window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));

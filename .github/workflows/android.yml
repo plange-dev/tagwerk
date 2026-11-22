@@ -28,6 +28,11 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci
 
+      - name: Versionsangabe in die App schreiben
+        run: |
+          echo "{\"version\":\"1.0.${{ github.run_number }}\",\"channel\":\"${{ github.ref_name }}\",\"commit\":\"${GITHUB_SHA::7}\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"platform\":\"android\"}" > www/version.json
+          cat www/version.json
+
       - name: Web-App in das Android-Projekt kopieren
         run: npx cap sync android
 
