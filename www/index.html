@@ -1712,23 +1712,26 @@ function renderNotif(){
   h+=`<label class="opt"><span>Tagesübersicht am Morgen</span><input type="checkbox" class="switch" id="n-daily" ${N.daily?"checked":""}></label>`;
   h+=`<div class="opt" style="${N.daily?"":"opacity:.5"}"><span>Uhrzeit</span><input type="time" id="n-at" value="${esc(N.dailyAt)}" ${N.daily?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 8px"></div>`;
   if(SOURCES.dev.st.enabled)h+=`<label class="opt"><span>Auch Termine aus Handy-Konten</span><input type="checkbox" class="switch" id="n-dev" ${N.devToo?"checked":""}></label><p class="side-note">${N.devToo?"Falls Erinnerungen doppelt kommen, schalte sie hier oder in der Kalender-App des Kontos (z. B. Google Kalender) aus.":"Diese Termine erinnert dann die Kalender-App des Kontos (z. B. Google Kalender)."}</p>`;
-  const st=[],sys=N.sys;
-  if(sys){
-    st.push("System: "+(sys.enabled?"an":"<b style='color:#D9443F'>aus</b>"));
-    const ch=(sys.channels||[]).find(c=>c.id==="erinnerungen");
-    if(ch)st.push("Kanal Erinnerungen: "+(ch.importance===0?"<b style='color:#D9443F'>aus</b>":ch.importance>=4?"an (aufploppen)":"an"));
-    else st.push("Kanal Erinnerungen: fehlt");
-    if(sys.dnd)st.push("<b style='color:#D99A2B'>Bitte nicht stören ist an</b>");
-  }else st.push("Erlaubt: "+(N.perm==="granted"?"ja":N.perm==="denied"?"nein":"–"));
-  st.push("Pünktlich: "+(N.exact?"ja":"nein"));
-  if(N.planned!=null)st.push("Geplant: "+N.planned);
-  let nx="";
-  if(N.next){const d=new Date(N.next.at);nx=`Nächste: ${relDay(d)} ${hm(d)} – ${esc(N.next.title)}`;}
-  h+=`<p class="side-note" style="margin-top:4px">${st.join(" · ")}${nx?"<br>"+nx:""}${N.lastError?`<br><span style="color:#D9443F">Fehler: ${esc(N.lastError)}</span>`:""}</p>`;
-  h+=`<button class="opt-btn" data-act="notiftestnow">🔔 Sofort-Test</button>`;
-  h+=`<button class="opt-btn" data-act="notiftest">⏱ Test in 5 Sekunden</button>`;
+  const sys=N.sys;
+  if(isNightly()){
+    const st=[];
+    if(sys){
+      st.push("System: "+(sys.enabled?"an":"<b style='color:#D9443F'>aus</b>"));
+      const ch=(sys.channels||[]).find(c=>c.id==="erinnerungen");
+      if(ch)st.push("Kanal Erinnerungen: "+(ch.importance===0?"<b style='color:#D9443F'>aus</b>":ch.importance>=4?"an (aufploppen)":"an"));
+      else st.push("Kanal Erinnerungen: fehlt");
+      if(sys.dnd)st.push("<b style='color:#D99A2B'>Bitte nicht stören ist an</b>");
+    }else st.push("Erlaubt: "+(N.perm==="granted"?"ja":N.perm==="denied"?"nein":"–"));
+    st.push("Pünktlich: "+(N.exact?"ja":"nein"));
+    if(N.planned!=null)st.push("Geplant: "+N.planned);
+    let nx="";
+    if(N.next){const d=new Date(N.next.at);nx=`Nächste: ${relDay(d)} ${hm(d)} – ${esc(N.next.title)}`;}
+    h+=`<p class="side-note" style="margin-top:4px">${st.join(" · ")}${nx?"<br>"+nx:""}${N.lastError?`<br><span style="color:#D9443F">Fehler: ${esc(N.lastError)}</span>`:""}</p>`;
+    h+=`<button class="opt-btn" data-act="notiftestnow">🔔 Sofort-Test</button>`;
+    h+=`<button class="opt-btn" data-act="notiftest">⏱ Test in 5 Sekunden</button>`;
+    if(sys&&sys.model)h+=`<p class="side-note" style="opacity:.7">${esc(sys.model)} · Android-API ${esc(sys.sdk)}</p>`;
+  }
   h+=`<button class="opt-btn" data-act="notifsettings">⚙ Benachrichtigungs-Einstellungen öffnen</button>`;
-  if(sys&&sys.model)h+=`<p class="side-note" style="opacity:.7">${esc(sys.model)} · Android-API ${esc(sys.sdk)}</p>`;
   h+=`<div style="height:10px"></div>`;
   if(h!==_notifHtml){el.innerHTML=h;_notifHtml=h;}
 }
@@ -1747,6 +1750,8 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 
 /* ---------- Versionsanzeige ---------- */
 state.version=null;
+/* Test- und Diagnose-Werkzeuge nur in Nightly-Builds (und lokal ohne Versionsangabe) */
+const isNightly=()=>!state.version||state.version.channel!=="main";
 const verChannel=v=>!v?"":v.channel==="main"?"Release":v.channel==="nightly"?"Nightly":v.channel||"";
 function verLabel(v){
   if(!v)return FRAMED?"Vorschau-Version":"Entwicklungsversion";
@@ -1763,6 +1768,7 @@ async function loadVersion(){
     if(r.ok){const j=await r.json();if(j&&j.version)state.version=j;}
   }catch(e){}
   renderVersion();
+  if(typeof _notifHtml!=="undefined"){_notifHtml="";renderNotif();}
 }
 function openVersion(){
   const v=state.version;
