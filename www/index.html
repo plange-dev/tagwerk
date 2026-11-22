@@ -220,6 +220,14 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .pill.wide{width:100%;background:var(--accent);color:#fff;border:0}
 .dev-err{font-size:12px;color:#D9443F;margin:6px}
 .row select:disabled,.row input:disabled{opacity:.5}
+/* Mehrfachauswahl Erinnerungen */
+#r-remind{border-top:1px solid var(--line)}
+.rsel{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px}
+.rchip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 11px;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted);line-height:1.2}
+.rchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.rsum{color:var(--muted);font-size:13px;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-rsel{padding:2px 6px 8px}
+.side-rsel .rchip{font-size:12px;padding:5px 9px}
 /* Toast */
 .toast{position:fixed;left:50%;bottom:calc(96px + var(--safe-area-inset-bottom,env(safe-area-inset-bottom)));transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:11px 16px;border-radius:13px;font-size:14px;z-index:200;box-shadow:var(--shadow);display:flex;gap:14px;align-items:center;max-width:calc(100vw - 32px);animation:up .2s}
 .toast button{border:0;background:none;color:var(--accent);font-weight:700;cursor:pointer;padding:0}
@@ -710,7 +718,7 @@ function openEditor(id,opts={}){
       <div class="row"><span>Kalender</span><div class="calpick"><i id="f-calc"></i><select id="f-cal"><optgroup label="Tagwerk (nur dieses Gerät)">${state.cals.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>${srcList().map(S=>{const w=srcWritable(S);return w.length?`<optgroup label="${esc(S.title())} (synchronisiert)">${w.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</optgroup>`:"";}).join("")}</select></div></div>
       <div class="row"><span>Wiederholen</span><select id="f-rep">${Object.entries(REP).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select></div>
       <div class="row" id="r-until"><span>Endet am</span><input type="date" id="f-until"></div>
-      <div class="row" id="r-remind"><span>Erinnerung</span><select id="f-remind"></select></div>
+      <div id="r-remind"><div class="row"><span>Erinnerungen</span><span class="rsum" id="f-rsum"></span></div><div class="rsel" id="f-remind"></div></div>
     </div>
     <div class="group"><input id="f-loc" placeholder="Ort oder Adresse – z. B. Hauptstraße 5, 10115 Berlin" maxlength="200" autocomplete="street-address"><div class="navrow" id="f-nav"></div><textarea id="f-notes" placeholder="Notizen" rows="3" maxlength="5000"></textarea></div>
     ${lockSeries?`<p class="hint">Serie aus ${isNative()?"deinem Handy-Kalender":"Google Kalender"}: Titel, Ort und Notizen gelten für die ganze Serie. Datum und Wiederholung änderst du ${isNative()?"in der Kalender-App deines Kontos":"direkt in Google Kalender"}.</p>`:old&&rep!=="none"?`<p class="hint">Änderungen gelten für die ganze Serie.</p>`:""}
@@ -725,17 +733,23 @@ function openEditor(id,opts={}){
   if(old&&old.device&&!devWritable().some(c=>c.id===old.cal)){const o=document.createElement("option");o.value=old.cal;o.textContent=calOf(old.cal).name+" (schreibgeschützt)";f("f-cal").appendChild(o);f("f-cal").value=old.cal;}
   if(lockSeries)["f-allday","f-sd","f-st","f-ed","f-et","f-rep","f-cal"].forEach(k=>f(k).disabled=true);
   f("f-rep").value=rep;f("f-until").value=src.until||"";
-  let remindVal=old?(old.device?old.remind:effRemind(old)):(opts.draft&&opts.draft.remind!==undefined?opts.draft.remind:null);
-  let remindTouched=false;
+  let rem=old?(old.device?toList(old.remind):effRemind(old)):(opts.draft&&opts.draft.remind!==undefined?toList(opts.draft.remind):null);
+  let remTouched=false;
   const fillRemind=()=>{
     const ad=f("f-allday").checked;
-    if(!old&&!remindTouched&&!(opts.draft&&opts.draft.remind!==undefined))remindVal=defRemind(ad);
-    const list=(ad?REMIND_AD:REMIND_T).slice();
-    if(remindVal!=null&&!list.some(x=>x[0]===remindVal))list.push([remindVal,remindLabel(remindVal)]);
-    f("f-remind").innerHTML=list.map(([v,l])=>`<option value="${v===null?"":v}">${l}</option>`).join("");
-    f("f-remind").value=remindVal==null?"":String(remindVal);
+    if((!old&&!remTouched&&!(opts.draft&&opts.draft.remind!==undefined))||rem==null)rem=defRemind(ad);
+    const list=(ad?REMIND_AD:REMIND_T).filter(x=>x[0]!==null).slice();
+    for(const m of rem)if(!list.some(x=>x[0]===m))list.push([m,remindLabel(m)]);
+    f("f-remind").innerHTML=list.map(([v,l])=>`<button type="button" class="rchip ${rem.includes(v)?"on":""}" data-m="${v}">${l}</button>`).join("");
+    f("f-rsum").textContent=remSummary(rem);
   };
-  f("f-remind").onchange=()=>{remindTouched=true;const v=f("f-remind").value;remindVal=v===""?null:+v;};
+  f("f-remind").onclick=e=>{
+    const b=e.target.closest(".rchip");if(!b)return;
+    const m=+b.dataset.m;remTouched=true;
+    rem=rem.includes(m)?rem.filter(x=>x!==m):normRem(rem.concat(m));
+    b.classList.toggle("on",rem.includes(m));
+    f("f-rsum").textContent=remSummary(rem);
+  };
   f("r-remind").style.display=isNative()?"":"none";
   f("f-loc").value=src.location||"";f("f-notes").value=src.notes||"";
   const sync=()=>{
@@ -775,7 +789,7 @@ function openEditor(id,opts={}){
       title:f("f-title").value.trim()||"Ohne Titel",
       allDay:ad,start:toLocal(ns),end:toLocal(ne),
       cal:f("f-cal").value,repeat:repv,until:repv!=="none"?f("f-until").value:"",
-      ...(isNative()?{remind:remindVal}:(old&&old.remind!==undefined&&!old.device?{remind:old.remind}:{})),
+      ...(isNative()?{remind:normRem(rem||[])}:(old&&old.remind!==undefined&&!old.device?{remind:old.remind}:{})),
       location:f("f-loc").value.trim(),notes:f("f-notes").value.trim(),
       exdates:old&&old.exdates?[...old.exdates]:[],
       created:old&&old.created?old.created:Date.now(),updated:Date.now()
@@ -934,7 +948,7 @@ async function srcEnsure(S,from,to){
       const key=S.instPfx+inst.id+"|"+inst.startDate;
       inst._key=key;
       inst._ev={id:key,title:inst.title,cal:S.calPfx+inst.calendarId,location:inst.location||"",repeat:inst.isPartOfSeries?"series":"none",
-        remind:S.key==="dav"?(inst.alarm==null?null:inst.alarm):(Array.isArray(inst.alerts)&&inst.alerts.length?-inst.alerts[0]:null)};
+        remind:S.key==="dav"?normRem(inst.alarms||[]):normRem((Array.isArray(inst.alerts)?inst.alerts:[]).map(a=>-a))};
       inst._color=S.colorOf(inst);
       by.set(key,inst);
     }
@@ -960,7 +974,7 @@ function devOpts(ev){
   if(ev.allDay){o.startDate=startOfDay(s).getTime();o.endDate=startOfDay(e<s?s:e).getTime();}
   else{o.startDate=s.getTime();o.endDate=(e>s?e:new Date(s.getTime()+3600000)).getTime();}
   if(ev.repeat&&ev.repeat!=="none"&&REP[ev.repeat]){o.recurrence={frequency:ev.repeat,interval:1};if(ev.until)o.recurrence.end=addDays(parseLocal(ev.until),1).getTime()-1;}
-  if(ev.remind!==undefined){const r=ev.remind===""?null:ev.remind;o.alarm=r;o.alerts=r==null?[]:[-r];}
+  if(ev.remind!==undefined){const r=normRem(toList(ev.remind));o.alarms=r;o.alerts=r.map(m=>-m);}
   return o;
 }
 function authMsg(S){return S.key==="dav"?"Anmeldung beim CalDAV-Server fehlgeschlagen – bitte Zugangsdaten prüfen.":"Google-Anmeldung abgelaufen – bitte links erneut anmelden und nochmal speichern.";}
@@ -974,7 +988,7 @@ async function deviceSave(old,out){
     if(oS){
       const inst=old.device,P=oS.P();
       if(tS===oS&&tgt===String(inst.calendarId)){
-        if(old.series)await P.modifyEvent({id:String(inst.masterId||inst.id),title:o.title,location:o.location,description:o.description,alarm:o.alarm,alerts:o.alerts});
+        if(old.series)await P.modifyEvent({id:String(inst.masterId||inst.id),title:o.title,location:o.location,description:o.description,alarms:o.alarms,alerts:o.alerts});
         else await P.modifyEvent(Object.assign({id:String(inst.id)},o));
       }else{
         if(old.series){toast("Serien können nicht verschoben werden.");return;}
@@ -1248,15 +1262,15 @@ const DavCal=(()=>{
   function vevents(ics){
     const lines=unfold(ics).split(/\r?\n/);const out=[];let cur=null,depth=0;
     for(const l of lines){
-      if(/^BEGIN:VEVENT$/i.test(l)){cur={props:[],alarm:null,inAlarm:false};depth=0;continue;}
+      if(/^BEGIN:VEVENT$/i.test(l)){cur={props:[],alarms:[],inAlarm:false};depth=0;continue;}
       if(!cur)continue;
       if(/^BEGIN:/i.test(l)){depth++;if(depth===1&&/^BEGIN:VALARM$/i.test(l))cur.inAlarm=true;continue;}
       if(/^END:VEVENT$/i.test(l)&&depth===0){out.push(cur);cur=null;continue;}
       if(/^END:/i.test(l)){depth--;if(depth===0)cur.inAlarm=false;continue;}
       if(depth===0&&l.trim())cur.props.push(parseLine(l));
-      else if(depth===1&&cur.inAlarm&&cur.alarm===null&&/^TRIGGER/i.test(l)){const p=parseLine(l);if(p.params.VALUE!=="DATE-TIME"&&(!p.params.RELATED||p.params.RELATED==="START"))cur.alarm=Math.round(-durMs(p.value)/60000);}
+      else if(depth===1&&cur.inAlarm&&/^TRIGGER/i.test(l)){const p=parseLine(l);if(p.params.VALUE!=="DATE-TIME"&&(!p.params.RELATED||p.params.RELATED==="START"))cur.alarms.push(Math.round(-durMs(p.value)/60000));}
     }
-    return out.map(v=>{const g=n=>v.props.find(p=>p.name===n);return {g,all:n=>v.props.filter(p=>p.name===n),alarm:v.alarm};});
+    return out.map(v=>{const g=n=>v.props.find(p=>p.name===n);return {g,all:n=>v.props.filter(p=>p.name===n),alarms:v.alarms};});
   }
   const stamp=ms=>new Date(ms).toISOString().replace(/[-:]/g,"").replace(/\.\d{3}/,"");
   const dval=d=>d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
@@ -1292,7 +1306,7 @@ const DavCal=(()=>{
   }
   const join=lines=>lines.map(fold).join("\r\n")+"\r\n";
   function trig(m){const sg=m>0?"-":"",a=Math.abs(m),d=Math.floor(a/1440),h=Math.floor(a%1440/60),mi=a%60;return sg+"P"+(d?d+"D":"")+((h||mi||!d)?"T"+(h?h+"H":"")+(mi?mi+"M":"")+(!h&&!mi?"0S":""):"");}
-  const alarmLines=o=>o.alarm==null||o.alarm===""?[]:["BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+escv(o.title||"Erinnerung"),"TRIGGER:"+trig(+o.alarm),"END:VALARM"];
+  const alarmLines=o=>toList(o.alarms).flatMap(m=>["BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+escv(o.title||"Erinnerung"),"TRIGGER:"+trig(+m),"END:VALARM"]);
   function buildIcs(uidv,o){
     const {L,tzi}=propLines(o);
     return join(["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Tagwerk//Kalender//DE","CALSCALE:GREGORIAN",...(tzi?tzi.vt:[]),"BEGIN:VEVENT","UID:"+uidv,"DTSTAMP:"+stamp(Date.now()),"CREATED:"+stamp(Date.now()),...L,...alarmLines(o),"END:VEVENT","END:VCALENDAR"]);
@@ -1315,7 +1329,7 @@ const DavCal=(()=>{
         if(isMaster&&!done){
           done=true;
           let dd=0,skipAlarm=false;
-          const repAlarm=o.alarm!==undefined;
+          const repAlarm=o.alarms!==undefined;
           const keep=block.filter((x,i)=>{
             if(i===0)return true;
             if(/^BEGIN:/i.test(x)){dd++;if(dd===1&&repAlarm&&/^BEGIN:VALARM$/i.test(x)){skipAlarm=true;return false;}return !skipAlarm;}
@@ -1323,7 +1337,7 @@ const DavCal=(()=>{
             if(dd>0)return !skipAlarm;
             return !names.has(parseLine(x).name);
           });
-          const extra=[...L,"DTSTAMP:"+stamp(Date.now()),"LAST-MODIFIED:"+stamp(Date.now()),...(repAlarm?alarmLines({alarm:o.alarm,title:o.title||(block.map(parseLine).find(p=>p.name==="SUMMARY")||{}).value}):[])];
+          const extra=[...L,"DTSTAMP:"+stamp(Date.now()),"LAST-MODIFIED:"+stamp(Date.now()),...(repAlarm?alarmLines({alarms:o.alarms,title:o.title||(block.map(parseLine).find(p=>p.name==="SUMMARY")||{}).value}):[])];
           if(opts.exdate)extra.push(opts.exdate);
           out.push(...keep,...extra,l);
         }else if(opts.dropRecurMs!=null&&!isMaster&&block.some(x=>{if(!/^RECURRENCE-ID/i.test(x))return false;const d=parseDate(parseLine(x));return d&&d.ms===opts.dropRecurMs;})){/* entfernte Ausnahme */}
@@ -1391,7 +1405,7 @@ const DavCal=(()=>{
             const id=href+"#"+x.rid;
             objs.set(id,{href,etag,cal,rid:x.rid});
             const g=n=>{const p=v.g(n);return p?unesc(p.value):"";};
-            res.push({id,calendarId:cal,alarm:v.alarm,title:g("SUMMARY"),location:g("LOCATION"),description:g("DESCRIPTION"),startDate:x.s,endDate:x.e,isAllDay:st.allDay,isPartOfSeries:series,masterId:href});
+            res.push({id,calendarId:cal,alarms:v.alarms,title:g("SUMMARY"),location:g("LOCATION"),description:g("DESCRIPTION"),startDate:x.s,endDate:x.e,isAllDay:st.allDay,isPartOfSeries:series,masterId:href});
           }
         }
       }
@@ -1550,12 +1564,16 @@ function remindLabel(m){
   if(m%60===0)return `${m/60} Std. vorher`;
   return `${m} Min. vorher`;
 }
+const toList=v=>Array.isArray(v)?v.filter(x=>x!=null&&x!==""&&!isNaN(+x)).map(Number):(v==null||v===""||isNaN(+v)?[]:[Number(v)]);
+const normRem=l=>[...new Set(toList(l))].sort((a,b)=>b-a);
+const remSummary=l=>!l||!l.length?"Keine":l.length===1?remindLabel(l[0]):l.length+" Erinnerungen";
 const NOTIF_KEY="tagwerk:notif";
 state.notif=Object.assign({remind:true,defTimed:15,defAllDay:-540,daily:true,dailyAt:"07:00",asked:false},lsGet(NOTIF_KEY)||{},{perm:null,exact:false});
+state.notif.defTimed=normRem(state.notif.defTimed);state.notif.defAllDay=normRem(state.notif.defAllDay);
 function notifSave(){const n=state.notif;lsSet(NOTIF_KEY,{remind:n.remind,defTimed:n.defTimed,defAllDay:n.defAllDay,daily:n.daily,dailyAt:n.dailyAt,asked:n.asked});}
-const defRemind=allDay=>allDay?state.notif.defAllDay:state.notif.defTimed;
+const defRemind=allDay=>normRem(allDay?state.notif.defAllDay:state.notif.defTimed);
 /* Tagwerk-eigene Termine ohne eigene Angabe nutzen die Standard-Erinnerung */
-const effRemind=ev=>ev.remind===undefined?defRemind(!!ev.allDay):ev.remind;
+const effRemind=ev=>ev.remind===undefined?defRemind(!!ev.allDay):normRem(ev.remind);
 let _ln=null,_wg=null;
 function LN(){if(_ln!==null)return _ln;_ln=false;const C=window.Capacitor;if(C&&isNative()){try{_ln=C.registerPlugin("LocalNotifications");}catch(e){_ln=false;}}return _ln;}
 function WG(){if(_wg!==null)return _wg;_wg=false;const C=window.Capacitor;if(C&&isNative()){try{_wg=C.registerPlugin("TagwerkWidget");}catch(e){_wg=false;}}return _wg;}
@@ -1604,13 +1622,14 @@ async function doSchedule(){
   if(N.remind)for(const o of occ){
     const S=srcOfInst(o.ev.id);
     if(S&&S.key==="dev")continue; /* Handy-Konten: Erinnerung kommt von der Kalender-App des Kontos */
-    const r=S?o.ev.remind:effRemind(o.ev);
-    if(r==null||r==="")continue;
-    const at=o.start.getTime()-r*60000;
-    if(at<Date.now()+5000||at>to.getTime())continue;
+    const rs=S?normRem(o.ev.remind):effRemind(o.ev);
     const when=o.allDay?`${relDay(o.start)} · ganztägig`:`${relDay(o.start)} um ${hm(o.start)} Uhr`;
     const loc=o.ev.location?` · ${o.ev.location}`:"";
-    list.push({id:hashId("r|"+o.key+"|"+r),title:o.title,body:when+loc,schedule:{at:new Date(at),allowWhileIdle:true},channelId:"erinnerungen",smallIcon:"ic_stat_tagwerk",iconColor:"#D4552C",extra:{date:ymd(o.start)},isExactNotification:!!N.exact,autoCancel:true});
+    for(const r of rs){
+      const at=o.start.getTime()-r*60000;
+      if(at<Date.now()+5000||at>to.getTime())continue;
+      list.push({id:hashId("r|"+o.key+"|"+r),title:o.title,body:when+loc,schedule:{at:new Date(at),allowWhileIdle:true},channelId:"erinnerungen",smallIcon:"ic_stat_tagwerk",iconColor:"#D4552C",extra:{date:ymd(o.start)},isExactNotification:!!N.exact,autoCancel:true});
+    }
   }
   if(N.daily){
     const [hh,mm]=String(N.dailyAt||"07:00").split(":").map(Number);
@@ -1648,8 +1667,9 @@ function renderNotif(){
   if(N.perm==="denied")h+=`<p class="side-note">Benachrichtigungen sind für Tagwerk ausgeschaltet. Erlaube sie unter Einstellungen → Apps → Tagwerk → Benachrichtigungen.</p><button class="opt-btn" data-act="notifask">Erneut prüfen</button>`;
   else if(N.perm!=="granted"&&N.perm!==null)h+=`<button class="pill wide" data-act="notifask" style="margin-bottom:8px">Benachrichtigungen erlauben</button>`;
   h+=`<label class="opt"><span>Erinnerungen vor Terminen</span><input type="checkbox" class="switch" id="n-rem" ${N.remind?"checked":""}></label>`;
-  h+=`<div class="opt" style="${N.remind?"":"opacity:.5"}"><span>Standard</span><select id="n-def" ${N.remind?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 6px;max-width:150px">${REMIND_T.map(([v,l])=>`<option value="${v===null?"":v}" ${v===N.defTimed?"selected":""}>${l}</option>`).join("")}</select></div>`;
-  h+=`<div class="opt" style="${N.remind?"":"opacity:.5"}"><span>Ganztägig</span><select id="n-defad" ${N.remind?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 6px;max-width:150px">${REMIND_AD.map(([v,l])=>`<option value="${v===null?"":v}" ${v===N.defAllDay?"selected":""}>${l}</option>`).join("")}</select></div>`;
+  const chipsFor=(kind,opts,sel)=>`<div class="side-rsel rsel" style="${N.remind?"":"opacity:.5;pointer-events:none"}">${opts.filter(x=>x[0]!==null).map(([v,l])=>`<button type="button" class="rchip ${sel.includes(v)?"on":""}" data-act="defrem" data-kind="${kind}" data-m="${v}">${l}</button>`).join("")}</div>`;
+  h+=`<div class="acct" style="margin-top:4px">Standard für Termine mit Uhrzeit</div>`+chipsFor("t",REMIND_T,N.defTimed);
+  h+=`<div class="acct">Standard für ganztägige Termine</div>`+chipsFor("ad",REMIND_AD,N.defAllDay);
   h+=`<label class="opt"><span>Tagesübersicht am Morgen</span><input type="checkbox" class="switch" id="n-daily" ${N.daily?"checked":""}></label>`;
   h+=`<div class="opt" style="${N.daily?"":"opacity:.5"}"><span>Uhrzeit</span><input type="time" id="n-at" value="${esc(N.dailyAt)}" ${N.daily?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 8px"></div>`;
   h+=`<p class="side-note" style="margin-top:6px">Termine aus Handy-Konten erinnert die Kalender-App des Kontos (z. B. Google Kalender).</p><div style="height:10px"></div>`;
@@ -1657,10 +1677,8 @@ function renderNotif(){
 }
 document.addEventListener("change",e=>{
   const id=e.target&&e.target.id,N=state.notif;
-  if(!["n-rem","n-def","n-defad","n-daily","n-at"].includes(id))return;
+  if(!["n-rem","n-daily","n-at"].includes(id))return;
   if(id==="n-rem")N.remind=e.target.checked;
-  if(id==="n-def")N.defTimed=e.target.value===""?null:+e.target.value;
-  if(id==="n-defad")N.defAllDay=e.target.value===""?null:+e.target.value;
   if(id==="n-daily")N.daily=e.target.checked;
   if(id==="n-at"&&e.target.value)N.dailyAt=e.target.value;
   notifSave();_planSig="";
@@ -1778,6 +1796,7 @@ document.addEventListener("click",e=>{
   switch(a){
     case "nav":e.stopPropagation();break;
     case "notifask":notifCheckPerm("force").then(render);break;
+    case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));notifSave();_planSig="";render();break;}
     case "devconnect":srcConnect(SOURCES[el.dataset.src||"dev"]);break;
     case "devrefresh":{const S=SOURCES[el.dataset.src||"dev"];srcLoadCals(S).then(()=>srcReload(S));toast("Aktualisiere "+S.label()+"…");break;}
     case "devdisconnect":srcDisconnect(SOURCES[el.dataset.src||"dev"]);break;

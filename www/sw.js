@@ -1,5 +1,5 @@
 /* Tagwerk – Offline-Cache */
-const CACHE = "tagwerk-v4";
+const CACHE = "tagwerk-v5";
 const FILES = [
   "./", "index.html", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png",
