@@ -16,6 +16,9 @@ Eigenständige Kalender-App mit eigenem Design.
 - **CalDAV-Konto (Android & PC):** Nextcloud, mailbox.org, Posteo, Radicale u. a. – Kalender anzeigen,
   Termine anlegen, ändern, löschen (auch einzelne Termine einer Serie). Android spricht den Server direkt an;
   am PC muss der Server Zugriffe von `https://plange-dev.github.io` erlauben (Nextcloud: App *WebAppPassword*).
+- **Benachrichtigungen (Android):** Erinnerung vor Terminen (Standard einstellbar, pro Termin änderbar)
+  und eine Tagesübersicht am Morgen. Termine aus Handy-Konten erinnert die Kalender-App des Kontos.
+- **Widget (Android):** „Tagwerk – Heute“ zeigt die heutigen Termine auf dem Startbildschirm.
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
 ## Installieren

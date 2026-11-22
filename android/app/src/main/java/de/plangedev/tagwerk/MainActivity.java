@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Eigenes Plugin für CalDAV (Nextcloud & Co.)
         registerPlugin(DavHttpPlugin.class);
+        registerPlugin(TagwerkWidgetPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -2,5 +2,13 @@
   "appId": "de.plangedev.tagwerk",
   "appName": "Tagwerk",
   "webDir": "www",
-  "android": { "backgroundColor": "#F5EFE6" }
+  "android": {
+    "backgroundColor": "#F5EFE6"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_tagwerk",
+      "iconColor": "#D4552C"
+    }
+  }
 }

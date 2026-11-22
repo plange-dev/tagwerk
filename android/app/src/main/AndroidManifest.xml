@@ -33,6 +33,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+        <receiver
+            android:name=".TagwerkWidget"
+            android:exported="false"
+            android:label="Tagwerk – Heute">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tagwerk_widget_info" />
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -41,4 +52,7 @@
     <!-- Kalender der Handy-Konten (Google, Samsung, Outlook …) lesen und schreiben -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <!-- Termin-Erinnerungen pünktlich auslösen (für Kalender-Apps vorgesehen) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
