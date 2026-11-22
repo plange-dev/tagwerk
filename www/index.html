@@ -357,6 +357,14 @@ const fmtDayLong=d=>`${WD_LONG[wdIndex(d)]}, ${d.getDate()}. ${MONTHS[d.getMonth
 const uid=()=>"e"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const isNative=()=>!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
 const isAndroid=()=>/android/i.test(navigator.userAgent);
+/* Native Plugins: Die App stellt sie unter Capacitor.Plugins bereit (ohne @capacitor/core gibt es kein registerPlugin) */
+function nativePlugin(name){
+  const C=window.Capacitor;
+  if(!C||!isNative())return null;
+  if(C.Plugins&&C.Plugins[name])return C.Plugins[name];
+  if(typeof C.registerPlugin==="function"){try{return C.registerPlugin(name);}catch(e){}}
+  return null;
+}
 /* Google-Kalender für die Web-/PC-Version: OAuth-Client-ID aus der Google Cloud Console (Typ „Webanwendung“) */
 const GOOGLE_CLIENT_ID="";
 const FRAMED=(()=>{try{return window.self!==window.top;}catch(e){return true;}})();
@@ -863,7 +871,7 @@ function devPlugin(){
   if(_devP)return _devP;
   const C=window.Capacitor;
   if(!C||!isNative()){if(googleAvailable())_devP=GoogleCal;return _devP;}
-  try{_devP=C.registerPlugin?C.registerPlugin("CapacitorCalendar"):null;}catch(e){_devP=null;}
+  _devP=nativePlugin("CapacitorCalendar");
   if(!_devP&&C.Plugins)_devP=C.Plugins.CapacitorCalendar||null;
   return _devP;
 }
@@ -1157,7 +1165,7 @@ const DavCal=(()=>{
     if(_http!==null)return _http;
     _http=false;
     const C=window.Capacitor;
-    if(C&&isNative()){try{_http=C.registerPlugin?C.registerPlugin("DavHttp"):(C.Plugins&&C.Plugins.DavHttp)||false;}catch(e){_http=false;}}
+    if(C&&isNative())_http=nativePlugin("DavHttp")||false;
     return _http;
   }
   const b64=s=>btoa(unescape(encodeURIComponent(s)));
@@ -1585,8 +1593,8 @@ const defRemind=allDay=>normRem(allDay?state.notif.defAllDay:state.notif.defTime
 /* Tagwerk-eigene Termine ohne eigene Angabe nutzen die Standard-Erinnerung */
 const effRemind=ev=>ev.remind===undefined?defRemind(!!ev.allDay):normRem(ev.remind);
 let _ln=null,_wg=null;
-function LN(){if(_ln!==null)return _ln;_ln=false;const C=window.Capacitor;if(C&&isNative()){try{_ln=C.registerPlugin("LocalNotifications");}catch(e){_ln=false;}}return _ln;}
-function WG(){if(_wg!==null)return _wg;_wg=false;const C=window.Capacitor;if(C&&isNative()){try{_wg=C.registerPlugin("TagwerkWidget");}catch(e){_wg=false;}}return _wg;}
+function LN(){if(_ln)return _ln;_ln=nativePlugin("LocalNotifications");return _ln;}
+function WG(){if(_wg)return _wg;_wg=nativePlugin("TagwerkWidget");return _wg;}
 async function notifInit(){
   const L=LN();if(!L)return;
   try{
