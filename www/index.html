@@ -1711,7 +1711,9 @@ function renderNotif(){
   const el=$("#notifsec");if(!el)return;
   if(!isNative()){if(_notifHtml!==""){el.innerHTML="";_notifHtml="";}return;}
   const N=state.notif;
-  if(document.activeElement&&el.contains(document.activeElement))return;
+  /* Nur nicht neu aufbauen, während ein Eingabefeld (z. B. Uhrzeit) bearbeitet wird */
+  const ae=document.activeElement;
+  if(ae&&el.contains(ae)&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)&&ae.type!=="checkbox")return;
   let h=`<div class="side-title">Benachrichtigungen</div>`;
   if(N.perm==="denied"||(N.sys&&!N.sys.enabled))h+=`<p class="side-note" style="color:#D9443F">Benachrichtigungen sind für Tagwerk ausgeschaltet.</p><button class="pill wide" data-act="notifsettings" style="margin-bottom:6px">In Android erlauben</button><button class="opt-btn" data-act="notifask">Erneut prüfen</button>`;
   else if(N.perm!=="granted"&&N.perm!==null)h+=`<button class="pill wide" data-act="notifask" style="margin-bottom:8px">Benachrichtigungen erlauben</button>`;
@@ -1932,7 +1934,7 @@ document.addEventListener("click",e=>{
     case "notiftest":notifTest(false);break;
     case "notiftestnow":notifTest(true);break;
     case "notifsettings":{const W=WG();if(W)W.openNotifSettings().catch(()=>toast("Einstellungen konnten nicht geöffnet werden."));break;}
-    case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));notifSave();_planSig="";render();break;}
+    case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));el.classList.toggle("on",N[k].includes(m));el.blur();notifSave();_planSig="";render();break;}
     case "devconnect":srcConnect(SOURCES[el.dataset.src||"dev"]);break;
     case "devrefresh":{const S=SOURCES[el.dataset.src||"dev"];srcLoadCals(S).then(()=>srcReload(S));toast("Aktualisiere "+S.label()+"…");break;}
     case "devdisconnect":srcDisconnect(SOURCES[el.dataset.src||"dev"]);break;
