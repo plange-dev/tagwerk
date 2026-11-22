@@ -39,6 +39,17 @@ aside{background:var(--panel);border-right:1px solid var(--line);padding:22px 20
 .brand svg{flex:none}
 .brand em{font-style:normal;color:var(--accent)}
 .side-title{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 8px;display:flex;justify-content:space-between;align-items:center}
+/* Ein-/ausklappbare Bereiche */
+.sec>.side-title{cursor:pointer;user-select:none;justify-content:flex-start;border-radius:8px;padding:4px 2px;margin-left:-2px}
+.sec>.side-title:hover{color:var(--ink)}
+.sec>.side-title:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sec>.side-title::before{content:"";width:6px;height:6px;border:solid currentColor;border-width:0 2px 2px 0;transform:rotate(45deg) translateY(-2px);margin:0 10px 0 3px;transition:transform .15s;flex:none}
+.sec.collapsed>.side-title::before{transform:rotate(-45deg)}
+.sec.collapsed>:not(.side-title){display:none!important}
+.sec.collapsed>.side-title{margin-bottom:0}
+.sec>.side-title button{margin-left:auto}
+#devsec{display:flex;flex-direction:column;gap:22px}
+#devsec:empty,#notifsec:empty{display:none}
 .side-title button{border:0;background:none;color:var(--accent);font-weight:700;font-size:12px;letter-spacing:0;text-transform:none;cursor:pointer;padding:4px}
 .cal-item{display:flex;align-items:center;gap:10px;padding:7px 6px;border-radius:10px;cursor:pointer;user-select:none}
 .cal-item:hover{background:var(--soft)}
@@ -281,13 +292,13 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
       <span>Tag<em>werk</em></span>
     </div>
     <div id="mini"></div>
-    <div>
+    <div class="sec" data-sec="cals">
       <div class="side-title">Kalender <button data-act="addcal">+ Neu</button></div>
       <div id="cals"></div>
     </div>
     <div id="devsec"></div>
-    <div>
-      <div id="notifsec"></div>
+    <div id="notifsec"></div>
+    <div class="sec" data-sec="opt">
       <div class="side-title">Optionen</div>
       <label class="opt"><span>Feiertage (Deutschland)</span><input type="checkbox" class="switch" id="opt-hol"></label>
       <button class="opt-btn" data-act="backup">⤓ Backup erstellen</button>
@@ -547,7 +558,7 @@ function render(){
   document.querySelectorAll("#seg button").forEach(b=>b.classList.toggle("on",b.dataset.v===state.view));
   $("#period").innerHTML=periodTitle();
   $("#opt-hol").checked=state.holidays;
-  renderCals(); renderMini(); renderDev(); devEnsureView(); renderNotif(); notifSchedule();
+  renderCals(); renderMini(); renderDev(); devEnsureView(); renderNotif(); applySecs(); notifSchedule();
   const v=$("#view");
   if(state.search.trim())v.innerHTML=renderSearch();
   else if(state.view==="month")v.innerHTML=renderMonth();
@@ -697,8 +708,9 @@ function toast(msg,action){
 const modal=$("#modal");
 let modalHist=false;
 function openModal(html){modal.innerHTML=html;if(modal.hidden&&isNative()){try{history.pushState({m:1},"");modalHist=true;}catch(e){}}modal.hidden=false;}
-function closeModal(fromPop){if(modal.hidden)return;modal.hidden=true;modal.innerHTML="";if(modalHist&&!fromPop){modalHist=false;try{history.back();}catch(e){}}modalHist=false;}
-window.addEventListener("popstate",()=>{if(!modal.hidden)closeModal(true);else document.body.classList.remove("drawer");});
+let ignorePop=false;
+function closeModal(fromPop){if(modal.hidden)return;modal.hidden=true;modal.innerHTML="";if(modalHist&&!fromPop){modalHist=false;ignorePop=true;try{history.back();}catch(e){ignorePop=false;}}modalHist=false;}
+window.addEventListener("popstate",()=>{if(ignorePop){ignorePop=false;return;}if(!modal.hidden)closeModal(true);else document.body.classList.remove("drawer");});
 modal.addEventListener("click",e=>{if(e.target===modal||e.target.closest("[data-close]"))closeModal();});
 const REP={none:"Nie",daily:"Täglich",weekly:"Wöchentlich",monthly:"Monatlich",yearly:"Jährlich"};
 function lastCal(){const LS=srcOfCal(state.lastCal);if(LS){const d=srcWritable(LS).find(c=>c.id===state.lastCal);if(d)return d.id;}const v=state.cals.filter(c=>c.visible!==false);const l=state.cals.find(c=>c.id===state.lastCal);return (l||v[0]||state.cals[0]).id;}
@@ -1095,11 +1107,9 @@ function renderDavSection(){
 }
 function renderDev(){
   const el=$("#devsec");if(!el)return;
-  let h=renderDevSection();
-  const dav=renderDavSection();
-  if(h&&dav)h+=`<div style="height:14px"></div>`;
-  h+=dav;
-  if(state.events.size&&allWritable().length)h+=`<button class="opt-btn" data-act="devmigrate">⇄ Tagwerk-Termine ins Konto übertragen</button>`;
+  const dev=renderDevSection(),dav=renderDavSection();
+  let h=(dev?`<div class="sec" data-sec="dev">${dev}</div>`:"")+(dav?`<div class="sec" data-sec="dav">${dav}</div>`:"");
+  if(state.events.size&&allWritable().length)h+=`<button class="opt-btn" data-act="devmigrate" style="margin-top:-12px">⇄ Tagwerk-Termine ins Konto übertragen</button>`;
   el.innerHTML=h;
 }
 const devEnsureView=srcEnsureView;
@@ -1732,7 +1742,7 @@ function renderNotif(){
     if(sys&&sys.model)h+=`<p class="side-note" style="opacity:.7">${esc(sys.model)} · Android-API ${esc(sys.sdk)}</p>`;
   }
   h+=`<button class="opt-btn" data-act="notifsettings">⚙ Benachrichtigungs-Einstellungen öffnen</button>`;
-  h+=`<div style="height:10px"></div>`;
+  h=`<div class="sec" data-sec="notif">${h}</div>`;
   if(h!==_notifHtml){el.innerHTML=h;_notifHtml=h;}
 }
 document.addEventListener("change",e=>{
@@ -1747,6 +1757,28 @@ document.addEventListener("change",e=>{
   e.target.blur();render();
 });
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&isNative())notifCheckPerm(false).then(()=>{_wgSig="";render();});});
+
+/* ---------- Ein-/ausklappbare Bereiche der Seitenleiste ---------- */
+state.secs=Object.assign({notif:true,opt:true},lsGet("tagwerk:secs")||{});
+function applySecs(){
+  document.querySelectorAll("#side .sec[data-sec]").forEach(el=>{
+    const c=!!state.secs[el.dataset.sec];
+    el.classList.toggle("collapsed",c);
+    const t=el.querySelector(":scope>.side-title");
+    if(t){t.setAttribute("role","button");t.tabIndex=0;t.setAttribute("aria-expanded",String(!c));}
+  });
+}
+function toggleSec(t){
+  const el=t.closest(".sec[data-sec]");if(!el)return;
+  const k=el.dataset.sec;state.secs[k]=!state.secs[k];lsSet("tagwerk:secs",state.secs);applySecs();
+}
+document.addEventListener("click",e=>{
+  const t=e.target.closest("#side .sec>.side-title");
+  if(t&&!e.target.closest("button")){e.preventDefault();toggleSec(t);}
+},true);
+document.addEventListener("keydown",e=>{
+  if((e.key==="Enter"||e.key===" ")&&e.target.matches&&e.target.matches("#side .sec>.side-title")){e.preventDefault();toggleSec(e.target);}
+});
 
 /* ---------- Versionsanzeige ---------- */
 state.version=null;
