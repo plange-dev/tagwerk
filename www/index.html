@@ -1605,7 +1605,8 @@ async function notifCheckPerm(ask){
     state.notif.perm=p.display;
   }catch(e){state.notif.perm="denied";}
   try{const x=await L.checkExactNotificationSetting();state.notif.exact=!!(x&&x.exact_alarm==="granted");}catch(e){state.notif.exact=false;}
-  _planSig="";
+  try{const W=WG();state.notif.sys=W?await W.notifStatus():null;if(state.notif.sys&&state.notif.sys.enabled&&state.notif.perm!=="granted")state.notif.perm="granted";}catch(e){state.notif.sys=null;}
+  _planSig="";_notifHtml="";
 }
 let _planSig="",_planT=null,_wgSig="",_planBusy=false;
 function notifSchedule(){if(!isNative())return;clearTimeout(_planT);_planT=setTimeout(doSchedule,1200);}
@@ -1660,7 +1661,7 @@ async function doSchedule(){
   _planBusy=true;
   try{
     const pend=await L.getPending();
-    const ids=(pend&&pend.notifications||[]).filter(n=>+n.id!==TEST_ID).map(n=>({id:n.id}));
+    const ids=(pend&&pend.notifications||[]).filter(n=>+n.id!==TEST_ID&&+n.id!==TEST_ID-1).map(n=>({id:n.id}));
     if(ids.length)await L.cancel({notifications:ids});
     if(list.length)await L.schedule({notifications:list});
     _planSig=sig;
@@ -1669,7 +1670,16 @@ async function doSchedule(){
   _planBusy=false;
   _notifHtml="";renderNotif();
 }
-async function notifTest(){
+async function notifTest(now){
+  if(now){
+    const L=LN();if(!L){toast("Benachrichtigungen gibt es nur in der Android-App.");return;}
+    if(state.notif.perm!=="granted"){await notifCheckPerm("force");render();}
+    try{
+      await L.schedule({notifications:[{id:TEST_ID-1,title:"Tagwerk-Test (sofort)",body:"Wenn du das siehst, funktionieren Benachrichtigungen.",channelId:"erinnerungen",smallIcon:"ic_stat_tagwerk",iconColor:"#D4552C",autoCancel:true}]});
+      toast("Sofort-Test gesendet – schau in die Benachrichtigungsleiste.");
+    }catch(e){state.notif.lastError=errText(e);_notifHtml="";renderNotif();toast("Sofort-Test fehlgeschlagen: "+errText(e));}
+    return;
+  }
   const L=LN();if(!L){toast("Benachrichtigungen gibt es nur in der Android-App.");return;}
   if(state.notif.perm!=="granted"){await notifCheckPerm("force");render();}
   if(state.notif.perm!=="granted"){toast("Benachrichtigungen sind blockiert – bitte in den Android-Einstellungen erlauben.");return;}
@@ -1685,7 +1695,7 @@ function renderNotif(){
   const N=state.notif;
   if(document.activeElement&&el.contains(document.activeElement))return;
   let h=`<div class="side-title">Benachrichtigungen</div>`;
-  if(N.perm==="denied")h+=`<p class="side-note">Benachrichtigungen sind für Tagwerk ausgeschaltet. Erlaube sie unter Einstellungen → Apps → Tagwerk → Benachrichtigungen.</p><button class="opt-btn" data-act="notifask">Erneut prüfen</button>`;
+  if(N.perm==="denied"||(N.sys&&!N.sys.enabled))h+=`<p class="side-note" style="color:#D9443F">Benachrichtigungen sind für Tagwerk ausgeschaltet.</p><button class="pill wide" data-act="notifsettings" style="margin-bottom:6px">In Android erlauben</button><button class="opt-btn" data-act="notifask">Erneut prüfen</button>`;
   else if(N.perm!=="granted"&&N.perm!==null)h+=`<button class="pill wide" data-act="notifask" style="margin-bottom:8px">Benachrichtigungen erlauben</button>`;
   h+=`<label class="opt"><span>Erinnerungen vor Terminen</span><input type="checkbox" class="switch" id="n-rem" ${N.remind?"checked":""}></label>`;
   const chipsFor=(kind,opts,sel)=>`<div class="side-rsel rsel" style="${N.remind?"":"opacity:.5;pointer-events:none"}">${opts.filter(x=>x[0]!==null).map(([v,l])=>`<button type="button" class="rchip ${sel.includes(v)?"on":""}" data-act="defrem" data-kind="${kind}" data-m="${v}">${l}</button>`).join("")}</div>`;
@@ -1694,14 +1704,24 @@ function renderNotif(){
   h+=`<label class="opt"><span>Tagesübersicht am Morgen</span><input type="checkbox" class="switch" id="n-daily" ${N.daily?"checked":""}></label>`;
   h+=`<div class="opt" style="${N.daily?"":"opacity:.5"}"><span>Uhrzeit</span><input type="time" id="n-at" value="${esc(N.dailyAt)}" ${N.daily?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 8px"></div>`;
   if(SOURCES.dev.st.enabled)h+=`<label class="opt"><span>Auch Termine aus Handy-Konten</span><input type="checkbox" class="switch" id="n-dev" ${N.devToo?"checked":""}></label><p class="side-note">${N.devToo?"Falls Erinnerungen doppelt kommen, schalte sie hier oder in der Kalender-App des Kontos (z. B. Google Kalender) aus.":"Diese Termine erinnert dann die Kalender-App des Kontos (z. B. Google Kalender)."}</p>`;
-  const st=[];
-  st.push("Erlaubt: "+(N.perm==="granted"?"ja":N.perm==="denied"?"nein":"–"));
+  const st=[],sys=N.sys;
+  if(sys){
+    st.push("System: "+(sys.enabled?"an":"<b style='color:#D9443F'>aus</b>"));
+    const ch=(sys.channels||[]).find(c=>c.id==="erinnerungen");
+    if(ch)st.push("Kanal Erinnerungen: "+(ch.importance===0?"<b style='color:#D9443F'>aus</b>":ch.importance>=4?"an (aufploppen)":"an"));
+    else st.push("Kanal Erinnerungen: fehlt");
+    if(sys.dnd)st.push("<b style='color:#D99A2B'>Bitte nicht stören ist an</b>");
+  }else st.push("Erlaubt: "+(N.perm==="granted"?"ja":N.perm==="denied"?"nein":"–"));
   st.push("Pünktlich: "+(N.exact?"ja":"nein"));
   if(N.planned!=null)st.push("Geplant: "+N.planned);
   let nx="";
   if(N.next){const d=new Date(N.next.at);nx=`Nächste: ${relDay(d)} ${hm(d)} – ${esc(N.next.title)}`;}
   h+=`<p class="side-note" style="margin-top:4px">${st.join(" · ")}${nx?"<br>"+nx:""}${N.lastError?`<br><span style="color:#D9443F">Fehler: ${esc(N.lastError)}</span>`:""}</p>`;
-  h+=`<button class="opt-btn" data-act="notiftest">🔔 Test-Benachrichtigung senden</button><div style="height:10px"></div>`;
+  h+=`<button class="opt-btn" data-act="notiftestnow">🔔 Sofort-Test</button>`;
+  h+=`<button class="opt-btn" data-act="notiftest">⏱ Test in 5 Sekunden</button>`;
+  h+=`<button class="opt-btn" data-act="notifsettings">⚙ Benachrichtigungs-Einstellungen öffnen</button>`;
+  if(sys&&sys.model)h+=`<p class="side-note" style="opacity:.7">${esc(sys.model)} · Android-API ${esc(sys.sdk)}</p>`;
+  h+=`<div style="height:10px"></div>`;
   if(h!==_notifHtml){el.innerHTML=h;_notifHtml=h;}
 }
 document.addEventListener("change",e=>{
@@ -1863,7 +1883,9 @@ document.addEventListener("click",e=>{
     case "nav":e.stopPropagation();break;
     case "version":document.body.classList.remove("drawer");openVersion();break;
     case "notifask":notifCheckPerm("force").then(render);break;
-    case "notiftest":notifTest();break;
+    case "notiftest":notifTest(false);break;
+    case "notiftestnow":notifTest(true);break;
+    case "notifsettings":{const W=WG();if(W)W.openNotifSettings().catch(()=>toast("Einstellungen konnten nicht geöffnet werden."));break;}
     case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));notifSave();_planSig="";render();break;}
     case "devconnect":srcConnect(SOURCES[el.dataset.src||"dev"]);break;
     case "devrefresh":{const S=SOURCES[el.dataset.src||"dev"];srcLoadCals(S).then(()=>srcReload(S));toast("Aktualisiere "+S.label()+"…");break;}
