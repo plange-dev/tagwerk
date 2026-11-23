@@ -24,6 +24,8 @@ Eigenständige Kalender-App mit eigenem Design.
 - **Import:** Kalenderdateien (.ics) und Google-Export (.zip) aus Google, Outlook, Nextcloud, Apple u. a.
   in einen Tagwerk-Kalender oder ein verbundenes Konto – mit Serien, Ausnahmen und Erinnerungen,
   ohne Doppelte; nach CalDAV unverändert (verlustfrei).
+- **Export:** Kalender als .ics-Datei für Google, Outlook, Apple, Nextcloud u. a. – auf Android teilen
+  (Gmail, Drive, Nextcloud …) oder in „Download/Tagwerk“ speichern; oder direkt in ein Konto kopieren.
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
 ## Plattformen

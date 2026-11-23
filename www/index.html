@@ -326,6 +326,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
       <button class="opt-btn" data-act="backup">⤓ Backup erstellen</button>
       <button class="opt-btn" data-act="restore">⤒ Backup einspielen</button>
       <button class="opt-btn" data-act="import">📥 Kalender importieren (.ics / .zip)</button>
+      <button class="opt-btn" data-act="export">📤 Kalender exportieren (.ics)</button>
     </div>
     <div class="sidefoot">
       <div class="status" id="status"><i></i><span>Lädt…</span></div>
@@ -1560,7 +1561,16 @@ const DavCal=(()=>{
       if(r.status<200||r.status>=300)throw new Error("HTTP "+r.status);
       return "ok";
     },
-    ics:{unfold,parseLine,unesc,parseDate,durMs,vevents,stamp,join},
+    ics:{unfold,parseLine,unesc,parseDate,durMs,vevents,stamp,join,
+      veventLines:(uidv,o,exdates)=>{
+        const {L,tzi}=propLines(o),ex=[];
+        for(const d of exdates||[]){
+          const dd=parseLocal(d),st=new Date(o.startDate);
+          if(o.isAllDay)ex.push("EXDATE;VALUE=DATE:"+dval(dd));
+          else{const t=new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),st.getHours(),st.getMinutes());ex.push(tzi?"EXDATE;TZID="+tzi.tz+":"+lval(t):"EXDATE:"+stamp(t.getTime()));}
+        }
+        return {lines:["BEGIN:VEVENT","UID:"+uidv,"DTSTAMP:"+stamp(Date.now()),...L,...ex,...alarmLines(o),"END:VEVENT"],tzi};
+      }},
     _test:{patchIcs,buildIcs,vevents,parseDate}
   };
 })();
@@ -2265,6 +2275,122 @@ async function importToDav(P,calId,onlyFuture){
   srcReload(SOURCES.dav);
 }
 
+/* ---------- Export (.ics für Google, Outlook, Apple, Nextcloud …) ---------- */
+function exportUid(ev){return ev.uid&&!/[#@]\d+$/.test(ev.uid)?ev.uid:(ev.uid||ev.id)+"@tagwerk";}
+function evToOpts(ev){return devOpts(Object.assign({},ev,{remind:ev.remind===undefined?effRemind(ev):ev.remind}));}
+function buildExportIcs(evs,calName){
+  const I=DavCal.ics,lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Tagwerk//Kalender//DE","CALSCALE:GREGORIAN","METHOD:PUBLISH","X-WR-CALNAME:"+String(calName).replace(/[\r\n]/g," ")];
+  const body=[];let tz=null;
+  for(const ev of evs){const r=I.veventLines(exportUid(ev),evToOpts(ev),ev.exdates);if(r.tzi&&!tz)tz=r.tzi;body.push(...r.lines);}
+  if(tz)lines.push(...tz.vt);
+  lines.push(...body,"END:VCALENDAR");
+  return I.join(lines);
+}
+/* Termine aus Konten für den Export holen (als Einzeltermine) */
+async function fetchSourceEvents(S,rawIds,from,to){
+  if(!rawIds.length)return [];
+  const r=await S.P().listEventsInRange({from:from.getTime(),to:to.getTime(),calendarIds:rawIds});
+  return ((r&&r.result)||[]).map(inst=>{
+    const [a,b]=instRange(inst),e=inst.isAllDay?addDays(b,-1):b;
+    const rem=S.key==="dav"?normRem(inst.alarms||[]):normRem((inst.alerts||[]).map(x=>-x));
+    return {id:S.key+"-"+inst.id+"-"+inst.startDate,uid:(S.key+"-"+String(inst.id).replace(/[^A-Za-z0-9._-]/g,"_")+"-"+inst.startDate+"@tagwerk"),
+      title:inst.title||"Ohne Titel",allDay:!!inst.isAllDay,start:toLocal(a),end:toLocal(e<a?a:e),location:inst.location||"",notes:inst.description||"",repeat:"none",exdates:[],remind:rem};
+  });
+}
+function openExport(){
+  const nat=isNative(),srcs=srcList().filter(S=>S.st.enabled&&S.P()&&S.st.cals.length);
+  const calRows=state.cals.map(c=>`<label class="row"><span class="calpick"><i style="--c:${esc(c.color)}"></i>${esc(c.name)} <small style="color:var(--muted)">Tagwerk</small></span><input type="checkbox" class="switch" data-exc="${esc(c.id)}" checked></label>`).join("")
+    +srcs.flatMap(S=>S.st.cals.map(c=>`<label class="row"><span class="calpick" style="min-width:0"><i style="--c:${esc(c.color)}"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)} <small style="color:var(--muted)">${esc(S.title())}</small></span></span><input type="checkbox" class="switch" data-exc="${esc(c.id)}"></label>`)).join("");
+  const fileTargets=nat?[["share","Datei teilen (Gmail, Drive, Nextcloud …)"],["save","Datei in „Download/Tagwerk“ speichern"]]:[["download","Datei herunterladen (.ics)"]];
+  const acc=allWritable();
+  openModal(`<form class="sheet" id="expform"><div class="sheet-head"><button type="button" class="link" data-close>Abbrechen</button><h3>Kalender exportieren</h3><button class="link strong" type="submit" id="ex-go">Exportieren</button></div>
+    <p class="hint">Welche Kalender sollen exportiert werden?</p>
+    <div class="group">${calRows}</div>
+    <div class="group">
+      <label class="row"><span>Nur Termine ab heute</span><input type="checkbox" class="switch" id="ex-future"></label>
+      <div class="row"><span>Ziel</span><select id="ex-tgt">
+        <optgroup label="Als Datei">${fileTargets.map(([v,l])=>`<option value="file:${v}">${l}</option>`).join("")}</optgroup>
+        ${acc.length?`<optgroup label="In ein Konto kopieren">${acc.map(c=>`<option value="${esc(c.id)}">${calOptionLabel(c)}</option>`).join("")}</optgroup>`:""}
+      </select></div>
+    </div>
+    <p class="hint" id="ex-sum"></p>
+    <details class="hint" style="margin:0 4px 12px"><summary style="cursor:pointer;font-weight:600">So importierst du die Datei woanders</summary>
+      <p style="margin:6px 0"><b>Google:</b> calendar.google.com am PC → ⚙ Einstellungen → „Importieren &amp; exportieren“ → Datei wählen → Kalender wählen → „Importieren“.<br>
+      <b>Outlook:</b> outlook.com → Kalender → „Kalender hinzufügen“ → „Aus Datei hochladen“.<br>
+      <b>Apple:</b> .ics-Datei auf dem Mac in „Kalender“ öffnen oder per Mail ans iPhone schicken und antippen.<br>
+      <b>Nextcloud:</b> Kalender → ⚙ Kalender-Einstellungen → „Importieren“.</p></details>
+  </form>`);
+  const sel=()=>[...modal.querySelectorAll("[data-exc]")].filter(x=>x.checked).map(x=>x.dataset.exc);
+  const localEvs=fut=>{const ids=new Set(sel()),today=today0();return [...state.events.values()].filter(ev=>ids.has(calOf(ev.cal).id)&&(!fut||(ev.repeat&&ev.repeat!=="none"?(!ev.until||parseLocal(ev.until)>=today):parseLocal(ev.end)>=today)));};
+  const upd=()=>{
+    const fut=$("#ex-future",modal).checked,ids=sel(),loc=localEvs(fut),nAcc=ids.filter(id=>srcOfCal(id)).length;
+    const ser=loc.filter(e=>e.repeat&&e.repeat!=="none").length;
+    $("#ex-sum",modal).innerHTML=!ids.length?"Bitte mindestens einen Kalender wählen.":
+      `${loc.length} Tagwerk-Termine${ser?` (davon ${ser} Serien)`:""}${nAcc?` + Termine aus ${nAcc} Konto-Kalender(n) ${fut?"bis 2 Jahre im Voraus":"vom letzten Jahr bis 2 Jahre im Voraus"}, als Einzeltermine`:""}.`;
+    $("#ex-go",modal).disabled=!ids.length;
+  };
+  modal.querySelectorAll("[data-exc]").forEach(x=>x.onchange=upd);$("#ex-future",modal).onchange=upd;upd();
+  $("#expform",modal).onsubmit=async e=>{
+    e.preventDefault();
+    const fut=$("#ex-future",modal).checked,ids=sel(),tgt=$("#ex-tgt",modal).value;
+    if(!ids.length)return;
+    const btn=$("#ex-go",modal);btn.disabled=true;btn.textContent="Sammle …";
+    let evs=localEvs(fut);
+    try{
+      const from=fut?today0():addDays(today0(),-365),to=addDays(today0(),730);
+      for(const S of srcList()){
+        const raw=ids.filter(id=>id.startsWith(S.calPfx)&&S.st.enabled&&S.P()).map(id=>id.slice(S.calPfx.length));
+        if(raw.length)evs=evs.concat(await fetchSourceEvents(S,raw,from,to));
+      }
+    }catch(x){btn.disabled=false;btn.textContent="Exportieren";toast("Konto-Termine konnten nicht geladen werden: "+errText(x));return;}
+    /* Ziel-Kalender selbst nicht in sich selbst kopieren */
+    if(!tgt.startsWith("file:"))evs=evs.filter(ev=>!(ev.id&&String(ev.id).startsWith(srcOfCal(tgt).key+"-")&&ids.includes(tgt)));
+    if(!evs.length){btn.disabled=false;btn.textContent="Exportieren";toast("Keine Termine zum Exportieren.");return;}
+    closeModal();
+    if(tgt.startsWith("file:"))return exportFile(evs,ids,tgt.slice(5));
+    return copyToAccount(evs,tgt);
+  };
+}
+async function exportFile(evs,ids,how){
+  const names=ids.map(id=>calOf(id).name);
+  const calName=names.length===1?names[0]:"Tagwerk";
+  const ics=buildExportIcs(evs,calName);
+  const slug=names.length===1?calName.toLowerCase().replace(/[^a-z0-9äöüß]+/gi,"-").replace(/^-|-$/g,""):"";
+  const fname=`tagwerk-${slug?slug+"-":""}${ymd(today0())}.ics`;
+  const W=WG();
+  try{
+    if(how==="share"&&W){await W.shareFile({name:fname,data:ics,mime:"text/calendar"});return;}
+    if(how==="save"&&W){const r=await W.saveDownload({name:fname,data:ics,mime:"text/calendar"});toast(`${evs.length} Termine gespeichert: ${r&&r.path||fname}`);return;}
+    if(FRAMED){toast("Herunterladen geht hier nicht – nutze die installierte App oder die PC-Version.");return;}
+    const url=URL.createObjectURL(new Blob([ics],{type:"text/calendar;charset=utf-8"}));
+    const a=document.createElement("a");a.href=url;a.download=fname;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+    toast(`${evs.length} Termine exportiert: ${fname}`);
+  }catch(e){toast("Export fehlgeschlagen: "+errText(e));}
+}
+async function copyToAccount(evs,tgtId){
+  const S=srcOfCal(tgtId),calId=tgtId.slice(S.calPfx.length),P=S.P();
+  let ok=0,dup=0,fail=0,i=0;
+  for(const ev of evs){
+    i++;if(i%10===1)toast(`Kopiere ${i}/${evs.length} …`);
+    try{
+      if(S.key==="dav"){
+        const r=DavCal.ics.veventLines(exportUid(ev),evToOpts(ev),ev.exdates);
+        const ics=DavCal.ics.join(["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Tagwerk//Kalender//DE",...(r.tzi?r.tzi.vt:[]),...r.lines,"END:VCALENDAR"]);
+        (await DavCal.importRaw(calId,exportUid(ev),ics))==="exists"?dup++:ok++;
+      }else{
+        const r=await P.createEvent(Object.assign({calendarId:calId},evToOpts(ev)));ok++;
+        if(isNative()&&S.key==="dev"&&r&&r.id&&ev.exdates&&ev.exdates.length&&ev.repeat&&ev.repeat!=="none"){
+          const st=parseLocal(ev.start);
+          for(const d of ev.exdates){const dd=parseLocal(d);try{await P.deleteEvent({id:String(r.id),span:0,instanceDate:ev.allDay?Date.UTC(dd.getFullYear(),dd.getMonth(),dd.getDate()):new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),st.getHours(),st.getMinutes()).getTime()});}catch(e){}}
+        }
+      }
+    }catch(e){if(e&&e.needAuth){S.st.needAuth=true;toast(authMsg(S));srcReload(S);return;}fail++;}
+  }
+  toast(`${ok} Termine kopiert${dup?`, ${dup} schon vorhanden`:""}${fail?`, ${fail} fehlgeschlagen`:""}`);
+  srcReload(S);
+}
+
 /* ---------- Backup ---------- */
 function openBackup(){
   const data=JSON.stringify({app:"tagwerk",v:1,exported:new Date().toISOString(),cals:state.cals,holidays:state.holidays,events:[...state.events.values()]});
@@ -2374,6 +2500,7 @@ document.addEventListener("click",e=>{
   switch(a){
     case "nav":e.stopPropagation();break;
     case "import":document.body.classList.remove("drawer");openImport();break;
+    case "export":document.body.classList.remove("drawer");openExport();break;
     case "version":document.body.classList.remove("drawer");openVersion();break;
     case "notifask":notifCheckPerm("force").then(render);break;
     case "notiftest":notifTest(false);break;
