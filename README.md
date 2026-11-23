@@ -18,6 +18,10 @@ Eigenständige Kalender-App mit eigenem Design.
 
 <img src="docs/screenshots/10-pc.png" width="820" alt="PC-Version">
 
+**Dunkler Modus** (folgt automatisch der Einstellung von Handy bzw. PC):
+
+<img src="docs/screenshots/08-dunkel.png" width="180" alt="Dunkler Modus">
+
 <sub>Die Screenshots zeigen erfundene Beispieltermine.</sub>
 
 ## Funktionen
