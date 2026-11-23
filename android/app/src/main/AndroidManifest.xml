@@ -55,4 +55,7 @@
     <!-- Termin-Erinnerungen pünktlich auslösen (für Kalender-Apps vorgesehen) -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Optional: aktueller Standort als Startpunkt für die Fahrzeit -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

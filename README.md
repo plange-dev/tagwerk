@@ -18,6 +18,8 @@ Eigenständige Kalender-App mit eigenem Design.
   am PC muss der Server Zugriffe von `https://plange-dev.github.io` erlauben (Nextcloud: App *WebAppPassword*).
 - **Benachrichtigungen (Android):** Erinnerung vor Terminen (Standard einstellbar, pro Termin änderbar)
   und eine Tagesübersicht am Morgen. Termine aus Handy-Konten erinnert die Kalender-App des Kontos.
+- **Fahrzeit-Erinnerung (Android):** berechnet die Fahrzeit (Auto/Fahrrad/zu Fuß) vom Startpunkt zum Ort
+  des Termins über OpenStreetMap, rundet auf volle 15 Min. auf und erinnert ans Losfahren.
 - **Widget (Android):** „Tagwerk – Heute“ zeigt die heutigen Termine auf dem Startbildschirm.
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 

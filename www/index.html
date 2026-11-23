@@ -747,7 +747,7 @@ function openEditor(id,opts={}){
       <div class="row"><span>Kalender</span><div class="calpick"><i id="f-calc"></i><select id="f-cal"><optgroup label="Tagwerk (nur dieses Gerät)">${state.cals.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>${srcList().map(S=>{const w=srcWritable(S);return w.length?`<optgroup label="${esc(S.title())} (synchronisiert)">${w.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.account&&c.account!==c.name?" – "+esc(c.account):""}</option>`).join("")}</optgroup>`:"";}).join("")}</select></div></div>
       <div class="row"><span>Wiederholen</span><select id="f-rep">${Object.entries(REP).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select></div>
       <div class="row" id="r-until"><span>Endet am</span><input type="date" id="f-until"></div>
-      <div id="r-remind"><div class="row"><span>Erinnerungen</span><span class="rsum" id="f-rsum"></span></div><div class="rsel" id="f-remind"></div></div>
+      <div id="r-remind"><div class="row"><span>Erinnerungen</span><span class="rsum" id="f-rsum"></span></div><div class="rsel" id="f-remind"></div><p class="hint" id="f-travelinfo" style="display:none;margin:0 14px 12px"></p></div>
     </div>
     <div class="group"><input id="f-loc" placeholder="Ort oder Adresse – z. B. Hauptstraße 5, 10115 Berlin" maxlength="200" autocomplete="street-address"><div class="navrow" id="f-nav"></div><textarea id="f-notes" placeholder="Notizen" rows="3" maxlength="5000"></textarea></div>
     ${lockSeries?`<p class="hint">Serie aus ${isNative()?"deinem Handy-Kalender":"Google Kalender"}: Titel, Ort und Notizen gelten für die ganze Serie. Datum und Wiederholung änderst du ${isNative()?"in der Kalender-App deines Kontos":"direkt in Google Kalender"}.</p>`:old&&rep!=="none"?`<p class="hint">Änderungen gelten für die ganze Serie.</p>`:""}
@@ -764,20 +764,41 @@ function openEditor(id,opts={}){
   f("f-rep").value=rep;f("f-until").value=src.until||"";
   let rem=old?(old.device?toList(old.remind):effRemind(old)):(opts.draft&&opts.draft.remind!==undefined?toList(opts.draft.remind):null);
   let remTouched=false;
+  let trav=old?(old.device?travelFlag(old.src,old.device):effTravel(old)):(opts.draft&&opts.draft.travel!==undefined?!!opts.draft.travel:state.notif.defTravel);
+  const sumText=()=>remSummary(rem)+(trav&&!f("f-allday").checked?" + Fahrzeit":"");
   const fillRemind=()=>{
     const ad=f("f-allday").checked;
     if((!old&&!remTouched&&!(opts.draft&&opts.draft.remind!==undefined))||rem==null)rem=defRemind(ad);
     const list=(ad?REMIND_AD:REMIND_T).filter(x=>x[0]!==null).slice();
     for(const m of rem)if(!list.some(x=>x[0]===m))list.push([m,remindLabel(m)]);
-    f("f-remind").innerHTML=list.map(([v,l])=>`<button type="button" class="rchip ${rem.includes(v)?"on":""}" data-m="${v}">${l}</button>`).join("");
-    f("f-rsum").textContent=remSummary(rem);
+    f("f-remind").innerHTML=list.map(([v,l])=>`<button type="button" class="rchip ${rem.includes(v)?"on":""}" data-m="${v}">${l}</button>`).join("")
+      +(ad?"":`<button type="button" class="rchip travel ${trav?"on":""}" data-travel="1">🚗 Fahrzeit</button>`);
+    f("f-rsum").textContent=sumText();
+    travelInfo();
+  };
+  let travT=null,travSeq=0;
+  const travelInfo=()=>{
+    const el=f("f-travelinfo");if(!el)return;
+    const ad=f("f-allday").checked,loc=f("f-loc").value.trim();
+    clearTimeout(travT);
+    if(!trav||ad){el.style.display="none";return;}
+    el.style.display="";
+    if(!loc){el.textContent="🚗 Trage einen Ort ein – dann rechnet Tagwerk die Fahrzeit aus.";return;}
+    el.textContent="🚗 Berechne Fahrzeit…";
+    const seq=++travSeq;
+    travT=setTimeout(async()=>{
+      try{const r=await travelFor(loc);if(seq!==travSeq)return;
+        el.textContent=`🚗 Fahrzeit ca. ${fmtMin(r.min)} (${TMODE[state.travel.mode]||"Auto"} ab ${state.travel.gps?"aktuellem Standort":"Start"}) → Erinnerung ${fmtMin(r.rounded)} vorher`;}
+      catch(e){if(seq===travSeq)el.textContent="🚗 "+errText(e);}
+    },700);
   };
   f("f-remind").onclick=e=>{
     const b=e.target.closest(".rchip");if(!b)return;
+    if(b.dataset.travel){trav=!trav;b.classList.toggle("on",trav);f("f-rsum").textContent=sumText();travelInfo();return;}
     const m=+b.dataset.m;remTouched=true;
     rem=rem.includes(m)?rem.filter(x=>x!==m):normRem(rem.concat(m));
     b.classList.toggle("on",rem.includes(m));
-    f("f-rsum").textContent=remSummary(rem);
+    f("f-rsum").textContent=sumText();
   };
   f("r-remind").style.display=isNative()?"":"none";
   f("f-loc").value=src.location||"";f("f-notes").value=src.notes||"";
@@ -789,7 +810,7 @@ function openEditor(id,opts={}){
     f("f-calc").style.setProperty("--c",colorOf(f("f-cal").value));
   };
   const navSync=()=>{const l=f("f-loc").value.trim();f("f-nav").style.display=l?"":"none";f("f-nav").innerHTML=l?navBtn(l)+(isNative()&&isAndroid()?`<a class="navbtn alt" href="${esc(geoUrl(l))}" data-act="nav">Andere Navi-App</a>`:""):"";};
-  navSync();f("f-loc").addEventListener("input",navSync);
+  navSync();f("f-loc").addEventListener("input",()=>{navSync();travelInfo();});
   sync();
   f("f-allday").onchange=()=>{if(!f("f-allday").checked&&f("f-st").value==="00:00"){f("f-st").value="09:00";f("f-et").value="10:00";}sync();};
   f("f-rep").onchange=sync;f("f-cal").onchange=sync;
@@ -818,7 +839,7 @@ function openEditor(id,opts={}){
       title:f("f-title").value.trim()||"Ohne Titel",
       allDay:ad,start:toLocal(ns),end:toLocal(ne),
       cal:f("f-cal").value,repeat:repv,until:repv!=="none"?f("f-until").value:"",
-      ...(isNative()?{remind:normRem(rem||[])}:(old&&old.remind!==undefined&&!old.device?{remind:old.remind}:{})),
+      ...(isNative()?{remind:normRem(rem||[]),travel:!!trav}:(old&&old.remind!==undefined&&!old.device?{remind:old.remind,travel:old.travel}:{})),
       location:f("f-loc").value.trim(),notes:f("f-notes").value.trim(),
       exdates:old&&old.exdates?[...old.exdates]:[],
       created:old&&old.created?old.created:Date.now(),updated:Date.now()
@@ -1019,16 +1040,18 @@ async function deviceSave(old,out){
       if(tS===oS&&tgt===String(inst.calendarId)){
         if(old.series)await P.modifyEvent({id:String(inst.masterId||inst.id),title:o.title,location:o.location,description:o.description,alarms:o.alarms,alerts:o.alerts});
         else await P.modifyEvent(Object.assign({id:String(inst.id)},o));
+        if(out.travel!==undefined)travelMapSet(oS,inst.masterId||inst.id,out.travel);
       }else{
         if(old.series){toast("Serien können nicht verschoben werden.");return;}
-        if(tS)await tS.P().createEvent(Object.assign({calendarId:tgt},o));
+        if(tS){const r=await tS.P().createEvent(Object.assign({calendarId:tgt},o));if(r&&r.id&&out.travel!==undefined)travelMapSet(tS,r.id,out.travel);}
         else saveEvent(Object.assign({},out,{id:uid(),created:Date.now(),updated:Date.now()}));
         errS=oS;
         await P.deleteEvent({id:String(inst.id),span:0});
       }
       toast(`Gesichert in „${calOf(tS?out.cal:old.cal).name}“`);
     }else{
-      await tS.P().createEvent(Object.assign({calendarId:tgt},o));
+      const r=await tS.P().createEvent(Object.assign({calendarId:tgt},o));
+      if(r&&r.id&&out.travel!==undefined)travelMapSet(tS,r.id,out.travel);
       if(old)deleteEvent(old.id);
       toast(`Eingetragen in „${calOf(out.cal).name}“`);
     }
@@ -1595,9 +1618,9 @@ const toList=v=>Array.isArray(v)?v.filter(x=>x!=null&&x!==""&&!isNaN(+x)).map(Nu
 const normRem=l=>[...new Set(toList(l))].sort((a,b)=>b-a);
 const remSummary=l=>!l||!l.length?"Keine":l.length===1?remindLabel(l[0]):l.length+" Erinnerungen";
 const NOTIF_KEY="tagwerk:notif";
-state.notif=Object.assign({remind:true,defTimed:15,defAllDay:-540,daily:true,dailyAt:"07:00",asked:false,devToo:true},lsGet(NOTIF_KEY)||{},{perm:null,exact:false,planned:null,next:null,lastError:null});
+state.notif=Object.assign({remind:true,defTimed:15,defAllDay:-540,daily:true,dailyAt:"07:00",asked:false,devToo:true,defTravel:false},lsGet(NOTIF_KEY)||{},{perm:null,exact:false,planned:null,next:null,lastError:null});
 state.notif.defTimed=normRem(state.notif.defTimed);state.notif.defAllDay=normRem(state.notif.defAllDay);
-function notifSave(){const n=state.notif;lsSet(NOTIF_KEY,{remind:n.remind,defTimed:n.defTimed,defAllDay:n.defAllDay,daily:n.daily,dailyAt:n.dailyAt,asked:n.asked,devToo:n.devToo});}
+function notifSave(){const n=state.notif;lsSet(NOTIF_KEY,{remind:n.remind,defTimed:n.defTimed,defAllDay:n.defAllDay,daily:n.daily,dailyAt:n.dailyAt,asked:n.asked,devToo:n.devToo,defTravel:n.defTravel});}
 const TEST_ID=999999;
 const defRemind=allDay=>normRem(allDay?state.notif.defAllDay:state.notif.defTimed);
 /* Tagwerk-eigene Termine ohne eigene Angabe nutzen die Standard-Erinnerung */
@@ -1660,6 +1683,17 @@ async function doSchedule(){
       list.push({id:hashId("r|"+o.key+"|"+r),title:o.title,body:when+loc,schedule:{at:new Date(at),allowWhileIdle:true},channelId:"erinnerungen",smallIcon:"ic_stat_tagwerk",iconColor:"#D4552C",extra:{date:ymd(o.start)},isExactNotification:!!N.exact,autoCancel:true});
     }
   }
+  if(N.remind)for(const o of occ){
+    if(o.allDay||!o.ev.location)continue;
+    const S=srcOfInst(o.ev.id);
+    const on=S?travelFlag(S,S.st.byKey.get(o.ev.id)):effTravel(o.ev);
+    if(!on||o.start.getTime()<Date.now())continue;
+    const t=travelCached(o.ev.location);
+    if(!t||t.err)continue;
+    const at=o.start.getTime()-t.rounded*60000;
+    if(at<Date.now()+5000||at>to.getTime())continue;
+    list.push({id:hashId("t|"+o.key),title:"🚗 Zeit zum Losfahren: "+o.title,body:`Fahrzeit ca. ${fmtMin(t.min)} · Termin ${relDay(o.start).toLowerCase()==="heute"?"":relDay(o.start)+" "}um ${hm(o.start)} Uhr · ${o.ev.location}`,schedule:{at:new Date(at),allowWhileIdle:true},channelId:"erinnerungen",smallIcon:"ic_stat_tagwerk",iconColor:"#D4552C",extra:{date:ymd(o.start)},isExactNotification:!!N.exact,autoCancel:true});
+  }
   if(N.daily){
     const [hh,mm]=String(N.dailyAt||"07:00").split(":").map(Number);
     for(let i=0;i<14;i++){
@@ -1721,6 +1755,12 @@ function renderNotif(){
   const chipsFor=(kind,opts,sel)=>`<div class="side-rsel rsel" style="${N.remind?"":"opacity:.5;pointer-events:none"}">${opts.filter(x=>x[0]!==null).map(([v,l])=>`<button type="button" class="rchip ${sel.includes(v)?"on":""}" data-act="defrem" data-kind="${kind}" data-m="${v}">${l}</button>`).join("")}</div>`;
   h+=`<div class="acct" style="margin-top:4px">Standard für Termine mit Uhrzeit</div>`+chipsFor("t",REMIND_T,N.defTimed);
   h+=`<div class="acct">Standard für ganztägige Termine</div>`+chipsFor("ad",REMIND_AD,N.defAllDay);
+  const T=state.travel;
+  h+=`<div class="acct" style="margin-top:6px">🚗 Fahrzeit-Erinnerung</div>
+    <div class="side-rsel rsel" style="${N.remind?"":"opacity:.5;pointer-events:none"}"><button type="button" class="rchip ${N.defTravel?"on":""}" data-act="deftravel">Bei Terminen mit Ort automatisch</button></div>
+    <div class="opt" style="padding-top:0"><input id="t-from" placeholder="Startadresse, z. B. Zuhause" value="${esc(T.from)}" ${T.gps?"disabled":""} style="flex:1;min-width:0;border:0;background:var(--soft);border-radius:9px;padding:7px 9px"></div>
+    <div class="side-rsel rsel">${Object.entries(TMODE).map(([k,l])=>`<button type="button" class="rchip ${T.mode===k?"on":""}" data-act="tmode" data-mode="${k}">${l}</button>`).join("")}<button type="button" class="rchip ${T.gps?"on":""}" data-act="tgps">📍 Aktueller Standort</button></div>
+    <p class="side-note">Gerundet auf volle 15 Min. (17 Min. → 30 Min.). Berechnet mit OpenStreetMap, ohne aktuellen Verkehr.</p>`;
   h+=`<label class="opt"><span>Tagesübersicht am Morgen</span><input type="checkbox" class="switch" id="n-daily" ${N.daily?"checked":""}></label>`;
   h+=`<div class="opt" style="${N.daily?"":"opacity:.5"}"><span>Uhrzeit</span><input type="time" id="n-at" value="${esc(N.dailyAt)}" ${N.daily?"":"disabled"} style="border:0;background:var(--soft);border-radius:9px;padding:5px 8px"></div>`;
   if(SOURCES.dev.st.enabled)h+=`<label class="opt"><span>Auch Termine aus Handy-Konten</span><input type="checkbox" class="switch" id="n-dev" ${N.devToo?"checked":""}></label><p class="side-note">${N.devToo?"Falls Erinnerungen doppelt kommen, schalte sie hier oder in der Kalender-App des Kontos (z. B. Google Kalender) aus.":"Diese Termine erinnert dann die Kalender-App des Kontos (z. B. Google Kalender)."}</p>`;
@@ -1749,6 +1789,7 @@ function renderNotif(){
 }
 document.addEventListener("change",e=>{
   const id=e.target&&e.target.id,N=state.notif;
+  if(id==="t-from"){state.travel.from=e.target.value.trim();travelSave();travelMem.clear();_planSig="";e.target.blur();render();return;}
   if(!["n-rem","n-daily","n-at","n-dev"].includes(id))return;
   if(id==="n-dev")N.devToo=e.target.checked;
   if(id==="n-rem")N.remind=e.target.checked;
@@ -1781,6 +1822,93 @@ document.addEventListener("click",e=>{
 document.addEventListener("keydown",e=>{
   if((e.key==="Enter"||e.key===" ")&&e.target.matches&&e.target.matches("#side .sec>.side-title")){e.preventDefault();toggleSec(e.target);}
 });
+
+/* ---------- Fahrzeit (OpenStreetMap: Nominatim + OSRM) ---------- */
+const TMODE={car:"Auto",bike:"Fahrrad",foot:"Zu Fuß"};
+state.travel=Object.assign({from:"",mode:"car",gps:false},lsGet("tagwerk:travel")||{},{pos:null});
+function travelSave(){const T=state.travel;lsSet("tagwerk:travel",{from:T.from,mode:T.mode,gps:T.gps});}
+const fmtMin=m=>m>=60?`${Math.floor(m/60)} Std.${m%60?" "+(m%60)+" Min.":""}`:`${m} Min.`;
+const roundUp15=m=>Math.max(15,Math.ceil(m/15)*15);
+/* Fahrzeit-Merker für Termine aus Konten (wird nicht ins Konto geschrieben) */
+const travelMap=lsGet("tagwerk:travelmap")||{};
+const tkey=(S,id)=>S.key+":"+(S.key==="dav"?String(id).split("#")[0]:String(id));
+function travelMapSet(S,id,on){if(!S||id==null)return;travelMap[tkey(S,id)]=!!on;lsSet("tagwerk:travelmap",travelMap);}
+function travelFlag(S,inst){if(!inst)return state.notif.defTravel;const v=travelMap[tkey(S,inst.masterId||inst.id)];return v===undefined?state.notif.defTravel:v;}
+const effTravel=ev=>ev.travel===undefined?state.notif.defTravel:!!ev.travel;
+const geoCache=lsGet("tagwerk:geo")||{},routeCache=lsGet("tagwerk:route")||{};
+async function httpJson(url){
+  const N=nativePlugin("DavHttp");
+  if(N){
+    const r=await N.request({url,method:"GET",headers:{"Accept":"application/json","User-Agent":"Tagwerk-Kalender/1.0 (+https://github.com/plange-dev/tagwerk)"}});
+    if(r.status!==200)throw new Error("Kartendienst antwortet mit HTTP "+r.status);
+    return JSON.parse(r.data);
+  }
+  let r;
+  try{r=await fetch(url,{headers:{"Accept":"application/json"}});}catch(e){throw new Error("Kartendienst nicht erreichbar.");}
+  if(!r.ok)throw new Error("Kartendienst antwortet mit HTTP "+r.status);
+  return r.json();
+}
+let geoQueue=Promise.resolve(),lastGeo=0;
+function geocode(q){
+  const k=q.trim().toLowerCase(),c=geoCache[k];
+  if(c&&Date.now()-c.t<90*DAY)return Promise.resolve(c.ll);
+  const p=geoQueue.then(async()=>{
+    const wait=1100-(Date.now()-lastGeo);if(wait>0)await sleep(wait);lastGeo=Date.now();
+    const j=await httpJson("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=de&q="+encodeURIComponent(q));
+    const ll=Array.isArray(j)&&j[0]?[+j[0].lat,+j[0].lon]:null;
+    geoCache[k]={ll,t:Date.now()};lsSet("tagwerk:geo",geoCache);
+    return ll;
+  });
+  geoQueue=p.catch(()=>{});
+  return p;
+}
+const PROFILE={car:"routed-car",bike:"routed-bike",foot:"routed-foot"};
+async function routeMin(a,b,mode){
+  const k=mode+"|"+a.map(x=>x.toFixed(4))+"|"+b.map(x=>x.toFixed(4)),c=routeCache[k];
+  if(c&&Date.now()-c.t<14*DAY)return c.m;
+  const coords=`${a[1]},${a[0]};${b[1]},${b[0]}`;
+  let j;
+  try{j=await httpJson(`https://routing.openstreetmap.de/${PROFILE[mode]||PROFILE.car}/route/v1/driving/${coords}?overview=false`);}
+  catch(e){if(mode!=="car")throw e;j=await httpJson(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=false`);}
+  if(!j||j.code!=="Ok"||!j.routes||!j.routes[0])throw new Error("Keine Route gefunden.");
+  const m=Math.max(1,Math.round(j.routes[0].duration/60));
+  routeCache[k]={m,t:Date.now()};lsSet("tagwerk:route",routeCache);
+  return m;
+}
+function getPos(){
+  return new Promise(res=>{
+    if(!navigator.geolocation)return res(state.travel.pos);
+    navigator.geolocation.getCurrentPosition(p=>{state.travel.pos=[p.coords.latitude,p.coords.longitude];res(state.travel.pos);},()=>res(state.travel.pos),{enableHighAccuracy:false,timeout:15000,maximumAge:15*60000});
+  });
+}
+async function originLL(){
+  const T=state.travel;
+  if(T.gps){const p=T.pos||await getPos();if(p)return p;throw new Error("Standort nicht verfügbar – bitte Ortung erlauben oder eine Startadresse eintragen.");}
+  if(!T.from)throw new Error("Kein Startpunkt – trage unter Benachrichtigungen → Fahrzeit deine Startadresse ein.");
+  const ll=await geocode(T.from);
+  if(!ll)throw new Error("Startadresse nicht gefunden: "+T.from);
+  return ll;
+}
+async function travelFor(dest){
+  const o=await originLL();
+  const d=await geocode(dest);
+  if(!d)throw new Error("Ort nicht gefunden: "+dest);
+  const min=await routeMin(o,d,state.travel.mode);
+  return {min,rounded:roundUp15(min)};
+}
+/* Für die Planung: sofortige Antwort aus dem Zwischenspeicher, sonst im Hintergrund berechnen */
+const travelMem=new Map();
+function travelCached(dest){
+  const T=state.travel,k=T.mode+"|"+(T.gps?"gps":T.from)+"|"+dest.trim().toLowerCase();
+  const v=travelMem.get(k);
+  if(v&&!v.pending&&Date.now()-v.t<(v.err?30*60000:6*3600e3))return v;
+  if(!v||!v.pending){
+    travelMem.set(k,{pending:true});
+    travelFor(dest).then(r=>{travelMem.set(k,Object.assign(r,{t:Date.now()}));_planSig="";notifSchedule();},e=>{travelMem.set(k,{err:errText(e),t:Date.now()});});
+  }
+  return v&&!v.pending?v:null;
+}
+if(isNative()&&state.travel.gps)setTimeout(getPos,2000);
 
 /* ---------- Versionsanzeige ---------- */
 state.version=null;
@@ -1932,6 +2060,9 @@ document.addEventListener("click",e=>{
     case "version":document.body.classList.remove("drawer");openVersion();break;
     case "notifask":notifCheckPerm("force").then(render);break;
     case "notiftest":notifTest(false);break;
+    case "deftravel":state.notif.defTravel=!state.notif.defTravel;el.classList.toggle("on",state.notif.defTravel);el.blur();notifSave();_planSig="";render();break;
+    case "tmode":state.travel.mode=el.dataset.mode;travelSave();travelMem.clear();_planSig="";el.blur();render();break;
+    case "tgps":state.travel.gps=!state.travel.gps;travelSave();travelMem.clear();_planSig="";el.blur();if(state.travel.gps)getPos().then(p=>{if(!p)toast("Standort nicht verfügbar – bitte Ortung für Tagwerk erlauben.");render();});render();break;
     case "notiftestnow":notifTest(true);break;
     case "notifsettings":{const W=WG();if(W)W.openNotifSettings().catch(()=>toast("Einstellungen konnten nicht geöffnet werden."));break;}
     case "defrem":{const N=state.notif,k=el.dataset.kind==="ad"?"defAllDay":"defTimed",m=+el.dataset.m;N[k]=N[k].includes(m)?N[k].filter(x=>x!==m):normRem(N[k].concat(m));el.classList.toggle("on",N[k].includes(m));el.blur();notifSave();_planSig="";render();break;}
