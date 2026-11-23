@@ -2,6 +2,24 @@
 
 Eigenständige Kalender-App mit eigenem Design.
 
+## So sieht Tagwerk aus
+
+| Monat | Woche | Liste | Termin bearbeiten |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/01-monat.png" width="180"> | <img src="docs/screenshots/02-woche.png" width="180"> | <img src="docs/screenshots/03-liste.png" width="180"> | <img src="docs/screenshots/04-termin.png" width="180"> |
+| Kalenderwochen, Punkte für Termine, Tagesliste darunter | Zeitraster mit allen Terminen der Woche | Nächste Wochen auf einen Blick, mit Navigation 🧭 | Erinnerungen per Mehrfachauswahl, 🚗 Fahrzeit, Knöpfe im Daumenbereich |
+
+| Schnell eintragen | Seitenleiste & Konten | Benachrichtigungen | Import |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/05-schnell.png" width="180"> | <img src="docs/screenshots/06-seitenleiste.png" width="180"> | <img src="docs/screenshots/07-benachrichtigungen.png" width="180"> | <img src="docs/screenshots/09-import.png" width="180"> |
+| „Freitag 14:30 Friseur Lindenallee 3 #privat“ wird automatisch erkannt | Kalender, Handy-Konten, CalDAV – ein- und ausklappbar | Standard-Erinnerungen, Tagesübersicht, Fahrzeit | .ics oder Google-ZIP mit Vorschau |
+
+**PC-Version** (installierbare Web-App):
+
+<img src="docs/screenshots/10-pc.png" width="820" alt="PC-Version">
+
+<sub>Die Screenshots zeigen erfundene Beispieltermine.</sub>
+
 ## Funktionen
 - Monats-, Wochen-, Tages- und Listenansicht, Kalenderwochen, deutsche Feiertage
 - **Schnell eintragen** in normaler Sprache, z. B. `Morgen 15 Uhr Zahnarzt Hauptstraße 5, 10115 Berlin`

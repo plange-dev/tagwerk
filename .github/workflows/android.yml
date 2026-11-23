@@ -3,6 +3,10 @@ name: Android-App bauen
 on:
   push:
     branches: [main, nightly]
+    # Reine Doku-Änderungen lösen keinen Build/Release aus
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
