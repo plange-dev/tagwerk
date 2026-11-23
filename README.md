@@ -21,6 +21,9 @@ Eigenständige Kalender-App mit eigenem Design.
 - **Fahrzeit-Erinnerung (Android):** berechnet die Fahrzeit (Auto/Fahrrad/zu Fuß) vom Startpunkt zum Ort
   des Termins über OpenStreetMap, rundet auf volle 15 Min. auf und erinnert ans Losfahren.
 - **Widget (Android):** „Tagwerk – Heute“ zeigt die heutigen Termine auf dem Startbildschirm.
+- **Import:** Kalenderdateien (.ics) und Google-Export (.zip) aus Google, Outlook, Nextcloud, Apple u. a.
+  in einen Tagwerk-Kalender oder ein verbundenes Konto – mit Serien, Ausnahmen und Erinnerungen,
+  ohne Doppelte; nach CalDAV unverändert (verlustfrei).
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
 ## Plattformen

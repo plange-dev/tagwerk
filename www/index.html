@@ -325,6 +325,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
       <label class="opt"><span>Feiertage (Deutschland)</span><input type="checkbox" class="switch" id="opt-hol"></label>
       <button class="opt-btn" data-act="backup">⤓ Backup erstellen</button>
       <button class="opt-btn" data-act="restore">⤒ Backup einspielen</button>
+      <button class="opt-btn" data-act="import">📥 Kalender importieren (.ics / .zip)</button>
     </div>
     <div class="sidefoot">
       <div class="status" id="status"><i></i><span>Lädt…</span></div>
@@ -476,6 +477,12 @@ async function initStore(){
 function saveEvent(ev){
   state.events.set(ev.id,ev); render();
   if(S.mode==="cloud"){const body=JSON.parse(JSON.stringify(ev));delete body.id;queue(ev.id,()=>withRetry(()=>S.evCol.doc(ev.id).set(body))).catch(writeError);}
+  else localSave();
+}
+function saveEventsBulk(list){
+  for(const ev of list)state.events.set(ev.id,ev);
+  render();
+  if(S.mode==="cloud"){for(const ev of list){const body=JSON.parse(JSON.stringify(ev));delete body.id;queue(ev.id,()=>withRetry(()=>S.evCol.doc(ev.id).set(body))).catch(writeError);}}
   else localSave();
 }
 function deleteEvent(id){
@@ -1544,6 +1551,16 @@ const DavCal=(()=>{
     connect,listCalendars,listEventsInRange,createEvent,modifyEvent,deleteEvent,
     configured:()=>!!(cred&&cred.home),creds:()=>cred,accountName:()=>cred&&cred.account||"",
     forget:()=>{cred=null;objs.clear();lsSet("tagwerk:davcred",null);},
+    importRaw:async(calId,uidv,ics)=>{
+      const cal=calId.endsWith("/")?calId:calId+"/";
+      const href=cal+encodeURIComponent(String(uidv).replace(/[^A-Za-z0-9._@-]/g,"_").slice(0,180))+".ics";
+      const r=await http("PUT",href,{headers:{"Content-Type":"text/calendar; charset=utf-8","If-None-Match":"*"},body:ics});
+      if(r.status===401)throw authErr();
+      if(r.status===412)return "exists";
+      if(r.status<200||r.status>=300)throw new Error("HTTP "+r.status);
+      return "ok";
+    },
+    ics:{unfold,parseLine,unesc,parseDate,durMs,vevents,stamp,join},
     _test:{patchIcs,buildIcs,vevents,parseDate}
   };
 })();
@@ -1982,6 +1999,272 @@ function openVersion(){
   </div>`);
 }
 
+/* ---------- Import (.ics / .zip aus Google, Outlook, Nextcloud, Apple …) ---------- */
+async function unzipIcs(buf){
+  const dv=new DataView(buf);let eocd=-1;
+  for(let i=buf.byteLength-22;i>=Math.max(0,buf.byteLength-65557);i--)if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}
+  if(eocd<0)throw new Error("Die ZIP-Datei ist beschädigt.");
+  const n=dv.getUint16(eocd+10,true);let off=dv.getUint32(eocd+16,true);const out=[];
+  for(let k=0;k<n;k++){
+    if(dv.getUint32(off,true)!==0x02014b50)break;
+    const method=dv.getUint16(off+10,true),csize=dv.getUint32(off+20,true),nlen=dv.getUint16(off+28,true),elen=dv.getUint16(off+30,true),clen=dv.getUint16(off+32,true),lho=dv.getUint32(off+42,true);
+    const name=new TextDecoder().decode(new Uint8Array(buf,off+46,nlen));off+=46+nlen+elen+clen;
+    if(!/\.ics$/i.test(name))continue;
+    const ln=dv.getUint16(lho+26,true),le=dv.getUint16(lho+28,true),data=new Uint8Array(buf,lho+30+ln+le,csize);
+    let bytes;
+    if(method===0)bytes=data;
+    else if(method===8){
+      if(typeof DecompressionStream==="undefined")throw new Error("Dieser Browser kann keine ZIP-Dateien entpacken – bitte die .ics-Dateien einzeln wählen.");
+      bytes=new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+    }else continue;
+    out.push({name:name.split("/").pop(),text:new TextDecoder().decode(bytes)});
+  }
+  return out;
+}
+/* Rohe Blöcke für verlustfreien Import nach CalDAV */
+function icsBlocks(text){
+  const lines=DavCal.ics.unfold(text).split(/\r?\n/);
+  const tz=[],ev=new Map();let cur=null,kind=null,depth=0,uidv=null;
+  for(const l of lines){
+    if(!cur){
+      if(/^BEGIN:(VEVENT|VTIMEZONE)$/i.test(l)){kind=l.slice(6).toUpperCase();cur=[l];depth=0;uidv=null;}
+      continue;
+    }
+    cur.push(l);
+    if(/^BEGIN:/i.test(l)){depth++;continue;}
+    if(/^END:/i.test(l)){
+      if(depth===0){
+        if(kind==="VTIMEZONE")tz.push(cur);else{const k=uidv||("tagwerk-"+uid());if(!ev.has(k))ev.set(k,[]);ev.get(k).push(cur);}
+        cur=null;continue;
+      }
+      depth--;continue;
+    }
+    if(depth===0&&kind==="VEVENT"&&/^UID[:;]/i.test(l))uidv=DavCal.ics.parseLine(l).value.trim();
+  }
+  return {tz,ev};
+}
+/* Wiederholungsregeln (RFC 5545, gängige Teilmenge) */
+const WDC={MO:0,TU:1,WE:2,TH:3,FR:4,SA:5,SU:6};
+function parseRule(v){
+  const p={};String(v).split(";").forEach(x=>{const i=x.indexOf("=");if(i>0)p[x.slice(0,i).toUpperCase()]=x.slice(i+1);});
+  const byday=p.BYDAY?p.BYDAY.split(",").map(x=>{const m=x.match(/^([+-]?\d+)?(MO|TU|WE|TH|FR|SA|SU)$/i);return m?{n:m[1]?+m[1]:0,wd:WDC[m[2].toUpperCase()]}:null;}).filter(Boolean):null;
+  const until=p.UNTIL?DavCal.ics.parseDate({value:p.UNTIL,params:{}}):null;
+  return {freq:p.FREQ,interval:Math.max(1,+(p.INTERVAL||1)),count:p.COUNT?+p.COUNT:null,until:until?until.ms:null,byday,
+    bymonthday:p.BYMONTHDAY?p.BYMONTHDAY.split(",").map(Number):null,bymonth:p.BYMONTH?p.BYMONTH.split(",").map(Number):null,
+    other:Object.keys(p).some(k=>!["FREQ","INTERVAL","COUNT","UNTIL","BYDAY","BYMONTHDAY","BYMONTH","WKST"].includes(k))};
+}
+function nthWeekday(y,m,wd,n){
+  if(n>0){const f=new Date(y,m,1);const d=1+((wd-wdIndex(f)+7)%7)+(n-1)*7;const r=new Date(y,m,d);return r.getMonth()===m?r:null;}
+  const l=new Date(y,m+1,0);const d=l.getDate()-((wdIndex(l)-wd+7)%7)+(n+1)*7;const r=new Date(y,m,d);return d>0&&r.getMonth()===m?r:null;
+}
+function expandRule(startMs,R,horizon,exset){
+  const b=new Date(startMs),H=b.getHours(),M=b.getMinutes(),out=[];let n=0;
+  const at=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate(),H,M);
+  const monthDays=(y,m)=>{
+    if(R.bymonthday)return R.bymonthday.map(x=>{const last=new Date(y,m+1,0).getDate();const d=x>0?x:last+1+x;return d>=1&&d<=last?new Date(y,m,d):null;}).filter(Boolean);
+    if(R.byday){const r=[];for(const {n:nn,wd} of R.byday){if(nn)r.push(nthWeekday(y,m,wd,nn));else for(let i=1;i<=5;i++)r.push(nthWeekday(y,m,wd,i));}return r.filter(Boolean);}
+    const d=new Date(y,m,b.getDate());return d.getMonth()===m?[d]:[];
+  };
+  for(let i=0;i<3000;i++){
+    let c=[];
+    if(R.freq==="DAILY")c=[addDays(b,i*R.interval)];
+    else if(R.freq==="WEEKLY"){const ws=addDays(startOfWeek(b),i*7*R.interval);c=(R.byday&&R.byday.length?R.byday.map(x=>x.wd):[wdIndex(b)]).map(wd=>addDays(ws,wd));}
+    else if(R.freq==="MONTHLY"){const t=new Date(b.getFullYear(),b.getMonth()+i*R.interval,1);c=monthDays(t.getFullYear(),t.getMonth());}
+    else if(R.freq==="YEARLY"){const y=b.getFullYear()+i*R.interval;for(const m of (R.bymonth||[b.getMonth()+1]))c.push(...(R.bymonthday||R.byday?monthDays(y,m-1):[new Date(y,m-1,b.getDate())].filter(d=>d.getMonth()===m-1)));}
+    else return out;
+    c=c.map(at).sort((x,y)=>x-y);
+    let any=false;
+    for(const d of c){
+      const ms=d.getTime();if(ms<startMs)continue;
+      if(R.until!=null&&ms>R.until)return out;
+      n++;if(R.count&&n>R.count)return out;
+      if(ms>horizon)return out;
+      any=true;if(!exset.has(ms))out.push(ms);
+    }
+    if(!c.length&&R.freq==="DAILY")return out;
+  }
+  return out;
+}
+function isSimpleRule(R,startMs){
+  if(!R||R.other||R.interval!==1||!["DAILY","WEEKLY","MONTHLY","YEARLY"].includes(R.freq))return false;
+  const b=new Date(startMs);
+  if(R.byday&&!(R.freq==="WEEKLY"&&R.byday.length===1&&!R.byday[0].n&&R.byday[0].wd===wdIndex(b)))return false;
+  if(R.bymonthday&&!(R.bymonthday.length===1&&R.bymonthday[0]===b.getDate()))return false;
+  if(R.bymonth&&!(R.bymonth.length===1&&R.bymonth[0]===b.getMonth()+1))return false;
+  return true;
+}
+const FREQ_REP={DAILY:"daily",WEEKLY:"weekly",MONTHLY:"monthly",YEARLY:"yearly"};
+function parseImport(files){
+  const I=DavCal.ics,items=[],cals=new Set();let raw=[];
+  for(const f of files){
+    const calName=((I.unfold(f.text).match(/^X-WR-CALNAME:(.*)$/mi)||[])[1]||f.name.replace(/\.ics$/i,"")).trim();
+    cals.add(calName);
+    raw.push({calName,blocks:icsBlocks(f.text)});
+    for(const v of I.vevents(f.text)){
+      const g=n=>{const p=v.g(n);return p?I.unesc(p.value):"";};
+      if(/^CANCELLED$/i.test(g("STATUS")))continue;
+      const ds=v.g("DTSTART");if(!ds)continue;
+      const st=I.parseDate(ds);if(!st)continue;
+      const de=v.g("DTEND");let en=de?I.parseDate(de):null;
+      let s0=st.allDay?(()=>{const x=new Date(st.ms);return new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate()).getTime();})():st.ms;
+      let e0;
+      if(en)e0=st.allDay?(()=>{const x=new Date(en.ms);return new Date(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate()).getTime();})():en.ms;
+      else if(v.g("DURATION"))e0=s0+I.durMs(v.g("DURATION").value);
+      else e0=st.allDay?addDays(new Date(s0),1).getTime():s0+3600000;
+      if(e0<=s0)e0=st.allDay?addDays(new Date(s0),1).getTime():s0+30*60000;
+      const ex=[];for(const x of v.all("EXDATE"))for(const val of x.value.split(",")){const d=I.parseDate({value:val,params:x.params});if(d)ex.push(d.allDay?(()=>{const y=new Date(d.ms);return new Date(y.getUTCFullYear(),y.getUTCMonth(),y.getUTCDate()).getTime();})():d.ms);}
+      const rid=v.g("RECURRENCE-ID");
+      items.push({uid:g("UID")||("tagwerk-"+uid()),calName,title:g("SUMMARY")||"Ohne Titel",location:g("LOCATION"),notes:g("DESCRIPTION"),allDay:st.allDay,s:s0,e:e0,
+        rule:v.g("RRULE")?parseRule(v.g("RRULE").value):null,exdates:ex,
+        recurId:rid?(()=>{const d=I.parseDate(rid);return d?(d.allDay?(()=>{const y=new Date(d.ms);return new Date(y.getUTCFullYear(),y.getUTCMonth(),y.getUTCDate()).getTime();})():d.ms):null;})():null,
+        alarms:v.alarms||[]});
+    }
+  }
+  return {items,cals:[...cals],raw};
+}
+/* Endet ein Eintrag (bzw. die Serie) vor „von“? */
+function itemLast(it,horizon){
+  if(!it.rule)return it.e;
+  if(it.rule.until==null&&!it.rule.count)return Infinity;
+  const occ=expandRule(it.s,it.rule,horizon,new Set());
+  return occ.length?occ[occ.length-1]+(it.e-it.s):it.e;
+}
+function planImport(P,onlyFuture,richSeries){
+  const today=today0().getTime(),horizon=addDays(today0(),730).getTime();
+  const masters=P.items.filter(i=>i.recurId==null),overrides=P.items.filter(i=>i.recurId!=null);
+  const ovByUid=new Map();for(const o of overrides){if(!ovByUid.has(o.uid))ovByUid.set(o.uid,[]);ovByUid.get(o.uid).push(o);}
+  const out=[];let skippedPast=0,expanded=0;
+  const mk=(it,s,e,extra)=>({uid:it.uid,title:it.title,location:it.location,notes:it.notes,allDay:it.allDay,s,e,alarms:it.alarms,...extra});
+  for(const it of masters){
+    const ov=ovByUid.get(it.uid)||[];
+    if(!it.rule){if(onlyFuture&&it.e<today){skippedPast++;continue;}out.push(mk(it,it.s,it.e,{}));continue;}
+    if(onlyFuture&&itemLast(it,horizon)<today){skippedPast++;continue;}
+    const exset=new Set([...it.exdates,...ov.map(o=>o.recurId)]);
+    const simple=isSimpleRule(it.rule,it.s)&&(richSeries||(!it.exdates.length&&!ov.length));
+    if(simple){
+      let untilMs=it.rule.until;
+      if(it.rule.count){const occ=expandRule(it.s,it.rule,Infinity,new Set());untilMs=occ.length?occ[occ.length-1]:it.s;}
+      out.push(mk(it,it.s,it.e,{repeat:FREQ_REP[it.rule.freq],until:untilMs!=null?ymd(new Date(untilMs)):"",exdates:[...exset].map(ms=>ymd(new Date(ms)))}));
+    }else{
+      const from=onlyFuture?today:-Infinity,dur=it.e-it.s;
+      const occ=expandRule(it.s,it.rule,horizon,exset).filter(ms=>ms+dur>=from).slice(0,730);
+      occ.forEach((ms,i)=>out.push(mk(it,ms,ms+dur,{uid:it.uid+"#"+i})));
+      expanded++;
+    }
+  }
+  for(const o of overrides){if(onlyFuture&&o.e<today){continue;}out.push(mk(o,o.s,o.e,{uid:o.uid+"@"+o.recurId}));}
+  return {list:out,skippedPast,expanded,series:masters.filter(m=>m.rule).length};
+}
+function openImport(){
+  const targets=[...state.cals.map(c=>({id:c.id,label:c.name+" (Tagwerk)"})),...allWritable().map(c=>({id:c.id,label:calOptionLabel(c)}))];
+  openModal(`<form class="sheet" id="impform"><div class="sheet-head"><button type="button" class="link" data-close>Abbrechen</button><h3>Kalender importieren</h3><button class="link strong" type="submit" id="im-go" disabled>Importieren</button></div>
+    <p class="hint">Wähle eine exportierte Kalenderdatei (<b>.ics</b>) oder die <b>.zip</b> aus Google Kalender.</p>
+    <div class="group"><input type="file" id="im-file" accept=".ics,.zip,text/calendar,application/zip" multiple style="padding:14px"></div>
+    <details class="hint" style="margin:0 4px 12px"><summary style="cursor:pointer;font-weight:600">So exportierst du deinen Kalender</summary>
+      <p style="margin:6px 0"><b>Google:</b> calendar.google.com am PC → ⚙ Einstellungen → „Importieren &amp; exportieren“ → „Exportieren“ (ZIP mit allen Kalendern).<br>
+      <b>Outlook:</b> outlook.com → Kalender → ⚙ → „Freigegebene Kalender“ → veröffentlichen und .ics laden, oder in Outlook „Datei → Kalender speichern“.<br>
+      <b>Nextcloud:</b> Kalender → ⋯ neben dem Kalender → „Exportieren“.<br>
+      <b>Apple:</b> iCloud-Kalender teilen → Link öffnen → .ics speichern.</p></details>
+    <div id="im-sum"></div>
+    <div class="group" id="im-opts" style="display:none">
+      <div class="row"><span>Importieren in</span><select id="im-tgt">${targets.map(t=>`<option value="${esc(t.id)}">${esc(t.label)}</option>`).join("")}</select></div>
+      <label class="row"><span>Nur Termine ab heute</span><input type="checkbox" class="switch" id="im-future" checked></label>
+    </div>
+    <div class="dev-err" id="im-err" style="display:none"></div>
+  </form>`);
+  let P=null;
+  const tgt=$("#im-tgt",modal);
+  const prefer=srcOfCal(lastCal())?lastCal():state.cals[0].id;if(tgt)tgt.value=prefer;
+  const summary=()=>{
+    if(!P)return;
+    const fut=$("#im-future",modal).checked,S=srcOfCal(tgt.value);
+    const pl=planImport(P,fut,!S||(S.key==="dev"&&isNative()));
+    const ss=P.items.filter(i=>i.recurId==null).map(i=>i.s).sort((a,b)=>a-b);
+    const yr=ss.length?`${new Date(ss[0]).getFullYear()}–${new Date(Math.max(...P.items.map(i=>i.s))).getFullYear()}`:"–";
+    $("#im-sum",modal).innerHTML=`<div class="group" style="padding:12px 14px">
+      <b>${P.items.length} Einträge gefunden</b> <span style="color:var(--muted)">(${yr})</span><br>
+      <span class="hint" style="margin:0">Aus: ${P.cals.map(esc).join(", ")} · ${pl.series} Serien</span>
+      <p class="hint" style="margin:8px 0 0">${S&&S.key==="dav"?`Wird unverändert an den Server übertragen. ${fut&&pl.skippedPast?pl.skippedPast+" vergangene ausgelassen. ":""}Bereits vorhandene Termine werden übersprungen.`
+        :`Es werden <b>${pl.list.length}</b> Termine angelegt${fut&&pl.skippedPast?`, ${pl.skippedPast} vergangene ausgelassen`:""}${pl.expanded?`. ${pl.expanded} Serie(n) mit besonderen Regeln werden als Einzeltermine angelegt (bis 2 Jahre im Voraus)`:""}.${S?"":" Schon importierte Termine werden übersprungen."}`}</p></div>`;
+    $("#im-go",modal).disabled=!P.items.length;
+  };
+  $("#im-file",modal).onchange=async e=>{
+    const err=$("#im-err",modal);err.style.display="none";P=null;$("#im-go",modal).disabled=true;$("#im-opts",modal).style.display="none";
+    try{
+      const files=[];
+      for(const f of e.target.files){
+        if(/\.zip$/i.test(f.name)||f.type==="application/zip")files.push(...await unzipIcs(await f.arrayBuffer()));
+        else files.push({name:f.name,text:await f.text()});
+      }
+      if(!files.length)throw new Error("In der Auswahl ist keine .ics-Datei.");
+      P=parseImport(files);
+      if(!P.items.length)throw new Error("In der Datei wurden keine Termine gefunden.");
+      $("#im-opts",modal).style.display="";summary();
+    }catch(x){err.textContent=errText(x);err.style.display="";$("#im-sum",modal).innerHTML="";}
+  };
+  $("#im-future",modal).onchange=summary;tgt.onchange=summary;
+  $("#impform",modal).onsubmit=async e=>{
+    e.preventDefault();if(!P)return;
+    const id=tgt.value,S=srcOfCal(id),fut=$("#im-future",modal).checked;
+    closeModal();
+    if(S&&S.key==="dav")return importToDav(P,id.slice(S.calPfx.length),fut);
+    const pl=planImport(P,fut,!S||(S.key==="dev"&&isNative()));
+    if(!S)return importLocal(pl,id);
+    return importToSource(pl,S,id.slice(S.calPfx.length));
+  };
+}
+function impToEv(x,cal){
+  const s=new Date(x.s),e=x.allDay?addDays(new Date(x.e),-1):new Date(x.e);
+  const ev={id:uid(),uid:x.uid,title:x.title,allDay:x.allDay,start:toLocal(s),end:toLocal(e<s?s:e),cal,repeat:x.repeat||"none",until:x.until||"",location:x.location||"",notes:x.notes||"",exdates:x.exdates||[],created:Date.now(),updated:Date.now()};
+  if(x.alarms&&x.alarms.length)ev.remind=normRem(x.alarms);
+  return ev;
+}
+function importLocal(pl,cal){
+  const have=new Set([...state.events.values()].map(e=>e.uid).filter(Boolean));
+  const list=[];let dup=0;
+  for(const x of pl.list){if(have.has(x.uid)){dup++;continue;}have.add(x.uid);list.push(impToEv(x,cal));}
+  saveEventsBulk(list);
+  toast(`${list.length} Termine importiert${dup?`, ${dup} schon vorhanden`:""}${pl.skippedPast?`, ${pl.skippedPast} vergangene ausgelassen`:""}`);
+}
+async function importToSource(pl,S,calId){
+  const P=S.P();let ok=0,fail=0,i=0;
+  for(const x of pl.list){
+    i++;if(i%10===1)toast(`Importiere ${i}/${pl.list.length} …`);
+    const ev=impToEv(x,"");
+    try{
+      const r=await P.createEvent(Object.assign({calendarId:calId},devOpts(ev)));ok++;
+      /* Ausnahmen einer Serie: einzelne Vorkommen wieder entfernen (Android-Kalender) */
+      if(r&&r.id&&x.repeat&&x.exdates&&x.exdates.length){
+        const t=new Date(x.s);
+        for(const d of x.exdates){const dd=parseLocal(d);const inst=new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),t.getHours(),t.getMinutes());
+          try{await P.deleteEvent({id:String(r.id),span:0,instanceDate:x.allDay?Date.UTC(dd.getFullYear(),dd.getMonth(),dd.getDate()):inst.getTime()});}catch(e){}}
+      }
+    }
+    catch(e){if(e&&e.needAuth){S.st.needAuth=true;toast(authMsg(S));break;}fail++;}
+  }
+  toast(`${ok} Termine importiert${fail?`, ${fail} fehlgeschlagen`:""}`);
+  srcReload(S);
+}
+async function importToDav(P,calId,onlyFuture){
+  const today=today0().getTime(),horizon=addDays(today0(),730).getTime();
+  const lastByUid=new Map();
+  for(const it of P.items){const l=it.recurId==null?itemLast(it,horizon):it.e;lastByUid.set(it.uid,Math.max(lastByUid.get(it.uid)||-Infinity,l));}
+  let ok=0,dup=0,fail=0,past=0,n=0;
+  const total=P.raw.reduce((a,r)=>a+r.blocks.ev.size,0);
+  for(const r of P.raw){
+    for(const [u,blocks] of r.blocks.ev){
+      n++;if(n%10===1)toast(`Importiere ${n}/${total} …`);
+      if(onlyFuture&&(lastByUid.get(u)??Infinity)<today){past++;continue;}
+      if(blocks.every(bl=>bl.some(l=>/^STATUS:CANCELLED$/i.test(l))))continue;
+      const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Tagwerk//Import//DE",...r.blocks.tz.flat(),...blocks.flat(),"END:VCALENDAR"];
+      try{const res=await DavCal.importRaw(calId,u,DavCal.ics.join(lines));if(res==="exists")dup++;else ok++;}
+      catch(e){if(e&&e.needAuth){SOURCES.dav.st.needAuth=true;toast(authMsg(SOURCES.dav));srcReload(SOURCES.dav);return;}fail++;}
+    }
+  }
+  toast(`${ok} Termine importiert${dup?`, ${dup} schon vorhanden`:""}${past?`, ${past} vergangene ausgelassen`:""}${fail?`, ${fail} fehlgeschlagen`:""}`);
+  srcReload(SOURCES.dav);
+}
+
 /* ---------- Backup ---------- */
 function openBackup(){
   const data=JSON.stringify({app:"tagwerk",v:1,exported:new Date().toISOString(),cals:state.cals,holidays:state.holidays,events:[...state.events.values()]});
@@ -2090,6 +2373,7 @@ document.addEventListener("click",e=>{
   const a=el.dataset.act,d=el.dataset.date;
   switch(a){
     case "nav":e.stopPropagation();break;
+    case "import":document.body.classList.remove("drawer");openImport();break;
     case "version":document.body.classList.remove("drawer");openVersion();break;
     case "notifask":notifCheckPerm("force").then(render);break;
     case "notiftest":notifTest(false);break;
