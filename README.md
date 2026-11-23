@@ -23,6 +23,12 @@ Eigenständige Kalender-App mit eigenem Design.
 - **Widget (Android):** „Tagwerk – Heute“ zeigt die heutigen Termine auf dem Startbildschirm.
 - Funktioniert offline; Tagwerk-eigene Termine bleiben auf dem Gerät, Backup über *Optionen*
 
+## Plattformen
+- **Android:** App (APK), Hauptplattform
+- **PC:** Web-App in Chrome/Edge, installierbar
+- **iOS:** wird nicht gezielt unterstützt oder getestet. Die Web-Version lässt sich in Safari öffnen,
+  ohne Erinnerungen, Widget und Handy-Konten.
+
 ## Installieren
 
 **Android:** Unter *Releases* die neueste `Tagwerk.apk` herunterladen und öffnen.
